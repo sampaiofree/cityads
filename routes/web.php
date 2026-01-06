@@ -3,14 +3,12 @@
 use Illuminate\Support\Facades\Route;
 use Laravel\Fortify\Features;
 use Livewire\Volt\Volt;
+use App\Http\Controllers\MetaOAuthController;
 
 Route::get('/', function () {
     return view('welcome');
 })->name('home');
 
-Route::view('dashboard', 'dashboard')
-    ->middleware(['auth', 'verified'])
-    ->name('dashboard');
 
 Route::middleware(['auth'])->group(function () {
     Route::redirect('settings', 'settings/profile');
@@ -29,4 +27,8 @@ Route::middleware(['auth'])->group(function () {
             ),
         )
         ->name('two-factor.show');
+
+    Route::get('meta/connect', [MetaOAuthController::class, 'redirect'])->name('meta.connect');
+    Route::get('meta/callback', [MetaOAuthController::class, 'callback'])->name('meta.callback');
+    Route::post('meta/disconnect', [MetaOAuthController::class, 'disconnect'])->name('meta.disconnect');
 });
