@@ -2,14 +2,17 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Pages\MetaSettings;
 use App\Jobs\ProcessMetaAdBatch;
 use App\Models\MetaAdBatch;
 use App\Models\MetaConnection;
 use App\Models\City;
 use App\Services\Meta\MetaAdsService;
 use Filament\Actions\Action;
+use Filament\Forms\Components\ColorPicker;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
@@ -27,6 +30,9 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use Throwable;
 
 class MetaAdsBulk extends Page implements HasForms, HasTable
@@ -49,13 +55,16 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $connection = $this->connection();
 
         $this->form->fill([
-            'app_id' => $connection?->app_id,
-            'app_secret' => null,
             'objective' => 'OUTCOME_LEADS',
             'daily_budget' => 6.6,
             'start_at' => now()->addMinutes(10),
             'title_template' => '{cidade} RECEBE +40 CURSOS PROFISSIONALIZANTES',
             'body_template' => "Programa liberado para {cidade}.\n\nSem mensalidades e sem custo de material.\n\nClique em \"Saiba mais\" e garanta sua vaga.",
+            'overlay_text' => '{cidade}',
+            'overlay_text_color' => '#ffffff',
+            'overlay_bg_color' => '#000000',
+            'overlay_position_x' => 50,
+            'overlay_position_y' => 12,
             'ad_account_id' => $connection?->ad_account_id,
             'page_id' => $connection?->page_id,
             'instagram_actor_id' => $connection?->instagram_actor_id,
@@ -67,21 +76,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
     {
         return $form
             ->schema([
-                Section::make('App do Meta')
-                    ->description('Cadastre o App ID e App Secret antes de conectar.')
-                    ->schema([
-                        TextInput::make('app_id')
-                            ->label('App ID')
-                            ->required()
-                            ->helperText('Use o App ID do seu app no Meta for Developers.'),
-                        TextInput::make('app_secret')
-                            ->label('App Secret')
-                            ->password()
-                            ->revealable()
-                            ->helperText('Necessario para concluir a conexao.')
-                            ->dehydrateStateUsing(fn ($state) => $state ?: null),
-                    ])
-                    ->columns(2),
                 Section::make('Conexao Meta')
                     ->description('Conecte sua conta do Meta para carregar os ativos.')
                     ->schema([
@@ -115,26 +109,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->disabled(fn () => !$this->hasValidConnection()),
                     ])
                     ->columns(2),
-                Section::make('Criativo')
-                    ->schema([
-                        FileUpload::make('image_path')
-                            ->label('Imagem do anuncio')
-                            ->disk('public')
-                            ->directory('meta_ads/source')
-                            ->image()
-                            ->maxSize(2048)
-                            ->required(),
-                        TextInput::make('title_template')
-                            ->label('Titulo')
-                            ->required()
-                            ->helperText('Use {cidade} para inserir o nome da cidade.'),
-                        Textarea::make('body_template')
-                            ->label('Texto do anuncio')
-                            ->required()
-                            ->rows(6)
-                            ->helperText('Use {cidade} para inserir o nome da cidade.'),
-                    ])
-                    ->columns(1),
                 Section::make('Destino e Segmentacao')
                     ->schema([
                         TextInput::make('url_template')
@@ -152,11 +126,76 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->label('Cidades')
                             ->multiple()
                             ->searchable()
+                            ->reactive()
                             ->getSearchResultsUsing(fn (string $search) => $this->searchCities($search))
                             ->getOptionLabelsUsing(fn (array $values) => $this->getCityLabels($values))
                             ->disabled(fn (Get $get) => filled($get('state'))),
                     ])
                     ->columns(1),
+                Section::make('Criativo')
+                    ->schema([
+                        FileUpload::make('image_path')
+                            ->label('Imagem do anuncio')
+                            ->disk('public')
+                            ->directory('meta_ads/source')
+                            ->image()
+                            ->maxSize(2048)
+                            ->live()
+                            ->afterStateUpdated(function ($state, callable $set) {
+                                if ($state instanceof TemporaryUploadedFile) {
+                                    $set('image_preview_url', $state->temporaryUrl());
+                                    return;
+                                }
+
+                                if (is_array($state)) {
+                                    $file = reset($state);
+                                    if ($file instanceof TemporaryUploadedFile) {
+                                        $set('image_preview_url', $file->temporaryUrl());
+                                        return;
+                                    }
+                                }
+
+                                $set('image_preview_url', null);
+                            })
+                            ->disabled(fn (Get $get) => blank($get('state')) && empty($get('city_ids')))
+                            ->helperText('Selecione um estado ou cidades antes de enviar a imagem.')
+                            ->required(),
+                        Hidden::make('image_preview_url')
+                            ->dehydrated(false),
+                        TextInput::make('title_template')
+                            ->label('Titulo')
+                            ->required()
+                            ->helperText('Use {cidade} para inserir o nome da cidade.'),
+                        Textarea::make('body_template')
+                            ->label('Texto do anuncio')
+                            ->required()
+                            ->rows(6)
+                            ->helperText('Use {cidade} para inserir o nome da cidade.'),
+                    ])
+                    ->columns(1),
+                Section::make('Bloco de texto na imagem')
+                    ->description('Arraste o bloco na previa para posicionar.')
+                    ->schema([
+                        Textarea::make('overlay_text')
+                            ->label('Texto do bloco')
+                            ->rows(2)
+                            ->required()
+                            ->live()
+                            ->helperText('Use {cidade} como placeholder.'),
+                        ColorPicker::make('overlay_text_color')
+                            ->label('Cor do texto')
+                            ->required()
+                            ->live(),
+                        ColorPicker::make('overlay_bg_color')
+                            ->label('Cor do fundo')
+                            ->required()
+                            ->live(),
+                        Hidden::make('overlay_position_x')
+                            ->required(),
+                        Hidden::make('overlay_position_y')
+                            ->required(),
+                    ])
+                    ->columns(2),
                 Section::make('Agendamento e Orcamento')
                     ->schema([
                         Select::make('objective')
@@ -220,8 +259,23 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             'settings' => [
                 'state' => $data['state'] ?? null,
                 'city_ids' => $data['city_ids'] ?? [],
+                'overlay_text' => $data['overlay_text'] ?? '{cidade}',
+                'overlay_text_color' => $data['overlay_text_color'] ?? '#ffffff',
+                'overlay_bg_color' => $data['overlay_bg_color'] ?? '#000000',
+                'overlay_position_x' => $data['overlay_position_x'] ?? 50,
+                'overlay_position_y' => $data['overlay_position_y'] ?? 12,
             ],
         ]);
+
+        MetaConnection::updateOrCreate(
+            ['user_id' => $user->id],
+            [
+                'ad_account_id' => $data['ad_account_id'],
+                'page_id' => $data['page_id'] ?? null,
+                'instagram_actor_id' => $data['instagram_actor_id'] ?? null,
+                'pixel_id' => $data['pixel_id'] ?? null,
+            ]
+        );
 
         ProcessMetaAdBatch::dispatch($batch->id);
 
@@ -255,9 +309,13 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
     {
         return [
             Action::make('connectMeta')
-                ->label('Conectar Meta')
-                ->action('openConnectPopup')
-                ->visible(fn () => !$this->hasValidConnection()),
+                ->label('Conectar com Facebook')
+                ->action('openSdkConnect')
+                ->visible(fn () => $this->hasAppId() && !$this->hasValidConnection()),
+            Action::make('metaSettings')
+                ->label('Configurar App')
+                ->url(fn () => MetaSettings::getUrl())
+                ->visible(fn () => !$this->hasAppId()),
             Action::make('refreshMeta')
                 ->label('Atualizar listas')
                 ->action(fn () => $this->refreshMetaAssets())
@@ -265,35 +323,20 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         ];
     }
 
-    public function openConnectPopup(): void
+    public function openSdkConnect(): void
     {
-        $data = $this->form->getRawState();
-        $appId = $data['app_id'] ?? null;
-        $appSecret = $data['app_secret'] ?? null;
+        $connection = $this->connection();
+        $appId = $connection?->app_id;
 
-        if (is_string($appId)) {
-            $appId = trim($appId);
-        }
-
-        if (is_string($appSecret)) {
-            $appSecret = trim($appSecret);
-        }
-
-        if ($appId === null || $appId === '' || $appSecret === null || $appSecret === '') {
+        if (!$appId) {
             Notification::make()
                 ->danger()
-                ->title('Informe App ID e App Secret antes de conectar.')
+                ->title('Cadastre o App ID antes de conectar.')
                 ->send();
             return;
         }
 
-        $user = Auth::user();
-        MetaConnection::updateOrCreate(
-            ['user_id' => $user->id],
-            $this->buildMetaConnectionPayload($appId, $appSecret)
-        );
-
-        $this->dispatch('meta-connect', url: route('meta.connect', ['popup' => 1]));
+        $this->dispatch('meta-sdk-connect', appId: $appId);
     }
 
     public function refreshMetaAssets(): void
@@ -301,6 +344,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $user = Auth::user();
         $service = app(MetaAdsService::class);
         $service->forgetCacheForUser($user->id);
+        $service->forgetInstagramAccountsCacheForUser($user->id, $this->data['ad_account_id'] ?? null);
         $service->forgetPixelsCacheForUser($user->id, $this->data['ad_account_id'] ?? null);
 
         Notification::make()
@@ -309,9 +353,29 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->send();
     }
 
+    public function getPreviewImageUrlProperty(): ?string
+    {
+        $previewUrl = $this->data['image_preview_url'] ?? null;
+        if (is_string($previewUrl) && $previewUrl !== '') {
+            return $previewUrl;
+        }
+
+        $imagePath = $this->data['image_path'] ?? null;
+        if (is_string($imagePath) && $imagePath !== '') {
+            return Storage::disk('public')->url($imagePath);
+        }
+
+        return null;
+    }
+
     private function connection(): ?MetaConnection
     {
         return Auth::user()?->metaConnection;
+    }
+
+    private function hasAppId(): bool
+    {
+        return (bool) $this->connection()?->app_id;
     }
 
     private function hasValidConnection(): bool
@@ -331,8 +395,8 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
     private function connectionStatus(): string
     {
         $connection = $this->connection();
-        if (!$connection || !$connection->app_id || !$connection->app_secret) {
-            return 'App ID e App Secret nao configurados.';
+        if (!$connection || !$connection->app_id) {
+            return 'App ID nao configurado.';
         }
 
         if (!$connection->access_token) {
@@ -353,9 +417,11 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         }
 
         try {
+            Log::info('MetaAdsBulk fetching ad accounts', ['user_id' => Auth::id()]);
             $service = app(MetaAdsService::class);
             return $service->fetchAdAccounts($this->connection()->access_token, Auth::id());
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            Log::error('MetaAdsBulk fetch ad accounts failed', ['user_id' => Auth::id(), 'exception' => $exception->getMessage()]);
             return [];
         }
     }
@@ -367,9 +433,11 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         }
 
         try {
+            Log::info('MetaAdsBulk fetching pages', ['user_id' => Auth::id()]);
             $service = app(MetaAdsService::class);
             return $service->fetchPages($this->connection()->access_token, Auth::id());
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            Log::error('MetaAdsBulk fetch pages failed', ['user_id' => Auth::id(), 'exception' => $exception->getMessage()]);
             return [];
         }
     }
@@ -381,9 +449,14 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         }
 
         try {
+            Log::info('MetaAdsBulk fetching instagram accounts', ['user_id' => Auth::id()]);
             $service = app(MetaAdsService::class);
-            return $service->fetchInstagramAccounts($this->connection()->access_token, Auth::id());
-        } catch (Throwable) {
+            $adAccountId = $this->data['ad_account_id'] ?? null;
+            return $service->fetchInstagramAccounts($this->connection()->access_token, Auth::id(), $adAccountId, [
+                'ad_account_id' => $adAccountId,
+            ]);
+        } catch (Throwable $exception) {
+            Log::error('MetaAdsBulk fetch instagram accounts failed', ['user_id' => Auth::id(), 'exception' => $exception->getMessage()]);
             return [];
         }
     }
@@ -452,15 +525,5 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             'Sergipe' => 'Sergipe',
             'Tocantins' => 'Tocantins',
         ];
-    }
-
-    private function buildMetaConnectionPayload(string $appId, string $appSecret): array
-    {
-        $payload = [
-            'app_id' => $appId,
-            'app_secret' => $appSecret,
-        ];
-
-        return array_filter($payload, fn ($value) => $value !== null && $value !== '');
     }
 }

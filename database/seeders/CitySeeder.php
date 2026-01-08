@@ -11,9 +11,13 @@ class CitySeeder extends Seeder
 {
     public function run(): void
     {
-        $response = Http::timeout(30)
-            ->retry(3, 500)
-            ->get('https://servicodados.ibge.gov.br/api/v1/localidades/municipios');
+        $request = Http::timeout(30)->retry(3, 500);
+
+        if (app()->environment('local')) {
+            $request = $request->withoutVerifying();
+        }
+
+        $response = $request->get('https://servicodados.ibge.gov.br/api/v1/localidades/municipios');
 
         if (! $response->ok()) {
             throw new RuntimeException('Failed to fetch cities from IBGE.');

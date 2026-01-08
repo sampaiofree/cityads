@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Laravel\Fortify\Features;
 use Livewire\Volt\Volt;
 use App\Http\Controllers\MetaOAuthController;
+use App\Http\Controllers\MetaSdkController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -31,4 +32,5 @@ Route::middleware(['auth'])->group(function () {
     Route::get('meta/connect', [MetaOAuthController::class, 'redirect'])->name('meta.connect');
     Route::get('meta/callback', [MetaOAuthController::class, 'callback'])->name('meta.callback');
     Route::post('meta/disconnect', [MetaOAuthController::class, 'disconnect'])->name('meta.disconnect');
+    Route::post('meta/sdk-token', [MetaSdkController::class, 'storeToken'])->name('meta.sdk-token');
 });

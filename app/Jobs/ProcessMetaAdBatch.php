@@ -14,7 +14,9 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 class ProcessMetaAdBatch implements ShouldQueue
@@ -65,11 +67,41 @@ class ProcessMetaAdBatch implements ShouldQueue
         $pixelId = $batch->pixel_id;
         $status = $batch->auto_activate ? 'ACTIVE' : 'PAUSED';
 
+        $batchContext = [
+            'batch_id' => $batch->id,
+            'user_id' => $batch->user_id,
+            'ad_account_id' => $adAccountId,
+        ];
+
+        Log::channel('meta')->info('MetaAds batch start', $batchContext);
+        Log::channel('meta')->info('MetaAds instagram actor selected', array_merge($batchContext, [
+            'instagram_actor_id' => $instagramActorId,
+        ]));
+
+        if ($instagramActorId) {
+            try {
+                $adsService->fetchInstagramActorDetails($accessToken, $instagramActorId, $batchContext);
+            } catch (Throwable $exception) {
+                Log::channel('meta')->warning('MetaAds instagram actor details failed', array_merge($batchContext, [
+                    'instagram_actor_id' => $instagramActorId,
+                    'exception' => $exception->getMessage(),
+                ]));
+            }
+        }
+
         $campaignId = $batch->meta_campaign_id;
         if (!$campaignId) {
             $campaignName = $this->buildCampaignName($batch->objective);
-            $campaignId = $adsService->createCampaign($accessToken, $adAccountId, $batch->objective, $campaignName, $status);
+            $campaignId = $adsService->createCampaign(
+                $accessToken,
+                $adAccountId,
+                $batch->objective,
+                $campaignName,
+                $status,
+                $batchContext
+            );
             if (!$campaignId) {
+                Log::channel('meta')->error('MetaAds batch campaign failed', $batchContext);
                 $batch->update(['status' => 'failed']);
                 return;
             }
@@ -85,17 +117,38 @@ class ProcessMetaAdBatch implements ShouldQueue
                 'status' => 'processing',
             ]);
 
+            $itemContext = array_merge($batchContext, [
+                'item_id' => $item->id,
+                'city_id' => $city->id,
+                'city' => $city->name,
+                'state' => $city->state,
+            ]);
+
             $generatedPath = null;
 
             try {
-                $cityKey = $adsService->findCityKey($accessToken, $city->name, $city->state);
+                $cityKey = $adsService->findCityKey($accessToken, $city->name, $city->state, $itemContext);
                 if (!$cityKey) {
                     $this->markItemFailed($batch, $item, 'Cidade nao encontrada no Meta.');
                     continue;
                 }
 
-                $generatedPath = $this->generateCreativeImage($imageGenerator, $batch, $city->name);
-                $imageHash = $adsService->uploadImage($accessToken, $adAccountId, $generatedPath);
+                $overlayTextTemplate = Arr::get($batch->settings, 'overlay_text', '{cidade}');
+                if (!is_string($overlayTextTemplate) || trim($overlayTextTemplate) === '') {
+                    $overlayTextTemplate = '{cidade}';
+                }
+                $overlayText = str_replace('{cidade}', $city->name, $overlayTextTemplate);
+
+                $overlay = [
+                    'text' => $overlayText,
+                    'text_color' => Arr::get($batch->settings, 'overlay_text_color', '#ffffff'),
+                    'bg_color' => Arr::get($batch->settings, 'overlay_bg_color', '#000000'),
+                    'position_x' => (float) Arr::get($batch->settings, 'overlay_position_x', 50),
+                    'position_y' => (float) Arr::get($batch->settings, 'overlay_position_y', 12),
+                ];
+
+                $generatedPath = $this->generateCreativeImage($imageGenerator, $batch, $overlay);
+                $imageHash = $adsService->uploadImage($accessToken, $adAccountId, $generatedPath, $itemContext);
 
                 if (!$imageHash) {
                     $this->markItemFailed($batch, $item, 'Falha no upload da imagem.');
@@ -117,7 +170,8 @@ class ProcessMetaAdBatch implements ShouldQueue
                     $startTimeUtc,
                     $pixelId,
                     $conversionEvent,
-                    $status
+                    $status,
+                    $itemContext
                 );
 
                 if (!$adSetId) {
@@ -130,7 +184,8 @@ class ProcessMetaAdBatch implements ShouldQueue
                 $body = str_replace('{cidade}', $city->name, $batch->body_template);
                 $url = str_replace('{cidade}', $city->name, $batch->url_template);
 
-                $creativeId = $adsService->createCreative(
+                $creativeId = $this->createCreativeWithFallback(
+                    $adsService,
                     $accessToken,
                     $adAccountId,
                     $adSetName,
@@ -140,11 +195,14 @@ class ProcessMetaAdBatch implements ShouldQueue
                     $imageHash,
                     $pageId,
                     $instagramActorId,
-                    'OPT_IN'
+                    'OPT_IN',
+                    $itemContext,
+                    $item
                 );
 
                 if (!$creativeId) {
-                    $creativeId = $adsService->createCreative(
+                    $creativeId = $this->createCreativeWithFallback(
+                        $adsService,
                         $accessToken,
                         $adAccountId,
                         $adSetName,
@@ -154,7 +212,9 @@ class ProcessMetaAdBatch implements ShouldQueue
                         $imageHash,
                         $pageId,
                         $instagramActorId,
-                        'OPT_OUT'
+                        'OPT_OUT',
+                        $itemContext,
+                        $item
                     );
                 }
 
@@ -170,7 +230,8 @@ class ProcessMetaAdBatch implements ShouldQueue
                     $adSetId,
                     $creativeId,
                     $adSetName,
-                    $status
+                    $status,
+                    $itemContext
                 );
 
                 if (!$adId) {
@@ -190,6 +251,9 @@ class ProcessMetaAdBatch implements ShouldQueue
 
                 $batch->increment('success_count');
             } catch (Throwable $exception) {
+                Log::channel('meta')->error('MetaAds batch item exception', array_merge($itemContext, [
+                    'exception' => $exception->getMessage(),
+                ]));
                 $this->markItemFailed($batch, $item, $exception->getMessage());
             } finally {
                 $this->deleteGeneratedImage($generatedPath ?? null);
@@ -202,6 +266,12 @@ class ProcessMetaAdBatch implements ShouldQueue
         $batch->update([
             'status' => $batch->error_count > 0 ? 'completed_with_errors' : 'completed',
         ]);
+
+        Log::channel('meta')->info('MetaAds batch complete', array_merge($batchContext, [
+            'status' => $batch->status,
+            'success_count' => $batch->success_count,
+            'error_count' => $batch->error_count,
+        ]));
     }
 
     private function resolveCities(MetaAdBatch $batch)
@@ -229,11 +299,11 @@ class ProcessMetaAdBatch implements ShouldQueue
         return sprintf('Afiliados %s - %s', $label, now()->format('Y-m-d H:i:s'));
     }
 
-    private function generateCreativeImage(CityImageGenerator $generator, MetaAdBatch $batch, string $cityName): string
+    private function generateCreativeImage(CityImageGenerator $generator, MetaAdBatch $batch, array $overlay): string
     {
         $sourcePath = Storage::disk('public')->path($batch->image_path);
 
-        return Storage::disk('local')->path($generator->generate($sourcePath, $cityName));
+        return Storage::disk('local')->path($generator->generate($sourcePath, $overlay));
     }
 
     private function deleteGeneratedImage(?string $path): void
@@ -262,5 +332,64 @@ class ProcessMetaAdBatch implements ShouldQueue
         ]);
 
         $batch->increment('error_count');
+    }
+
+    private function createCreativeWithFallback(
+        MetaAdsService $adsService,
+        string $accessToken,
+        string $adAccountId,
+        string $name,
+        string $title,
+        string $body,
+        string $url,
+        string $imageHash,
+        string $pageId,
+        ?string $instagramActorId,
+        string $enrollStatus,
+        array $context,
+        MetaAdBatchItem $item
+    ): ?string {
+        try {
+            return $adsService->createCreative(
+                $accessToken,
+                $adAccountId,
+                $name,
+                $title,
+                $body,
+                $url,
+                $imageHash,
+                $pageId,
+                $instagramActorId,
+                $enrollStatus,
+                $context
+            );
+        } catch (Throwable $exception) {
+            if ($instagramActorId && Str::contains($exception->getMessage(), 'instagram_actor_id')) {
+                Log::channel('meta')->warning('INSTAGRAM FALLBACK TRIGGERED: Tentando criar criativo sem Instagram.', array_merge($context, [
+                    'enroll_status' => $enrollStatus,
+                    'original_error' => $exception->getMessage(),
+                ]));
+
+                $item->update([
+                    'error_message' => 'Falha no Instagram: ' . $exception->getMessage(),
+                ]);
+
+                return $adsService->createCreative(
+                    $accessToken,
+                    $adAccountId,
+                    $name,
+                    $title,
+                    $body,
+                    $url,
+                    $imageHash,
+                    $pageId,
+                    null,
+                    $enrollStatus,
+                    array_merge($context, ['instagram_fallback' => true])
+                );
+            }
+
+            throw $exception;
+        }
     }
 }
