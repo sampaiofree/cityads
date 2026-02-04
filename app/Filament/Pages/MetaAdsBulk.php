@@ -162,6 +162,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->disk('public')
                             ->directory('meta_ads/source')
                             ->image()
+                            ->extraInputAttributes(['id' => 'meta-ads-image-input'])
                             ->deletable()
                             ->nullable()
                             ->maxSize(2048)
@@ -322,6 +323,16 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->success()
             ->title('Lote enviado para processamento.')
             ->send();
+
+        $this->data['image_path'] = null;
+        $this->data['image_preview_url'] = null;
+    }
+
+    public function addImage(): void
+    {
+        $this->data['image_path'] = null;
+        $this->data['image_preview_url'] = null;
+        $this->dispatch('meta-ads-image-picker');
     }
 
     public function table(Table $table): Table

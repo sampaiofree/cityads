@@ -344,8 +344,9 @@ class ProcessMetaAdBatch implements ShouldQueue
         $cityIds = Arr::get($batch->settings, 'city_ids', []);
 
         if ($state) {
+            $stateMatch = $this->resolveStateMatch($state);
             return City::query()
-                ->where('state', $state)
+                ->where('state', $stateMatch ?: $state)
                 ->orderBy('name')
                 ->get();
         }
@@ -354,6 +355,23 @@ class ProcessMetaAdBatch implements ShouldQueue
             ->whereIn('id', $cityIds)
             ->orderBy('name')
             ->get();
+    }
+
+    private function resolveStateMatch(string $state): ?string
+    {
+        $normalized = Str::ascii(Str::lower(trim($state)));
+        if ($normalized === '') {
+            return null;
+        }
+
+        $states = City::query()->select('state')->distinct()->pluck('state');
+        foreach ($states as $candidate) {
+            if (Str::ascii(Str::lower($candidate)) === $normalized) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     private function buildCampaignName(string $objective): string

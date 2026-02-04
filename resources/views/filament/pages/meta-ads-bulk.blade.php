@@ -37,12 +37,17 @@
                         })"
                         class="w-full"
                     >
-                        <div class="text-sm text-gray-500">
-                            Arraste o bloco para posicionar o texto sobre a imagem.
-                        </div>
+                    <div class="text-sm text-gray-500">
+                        Arraste o bloco para posicionar o texto sobre a imagem.
+                    </div>
+                    <div class="mt-3">
+                        <x-filament::button type="button" size="sm" color="gray" wire:click="addImage">
+                            Adicionar imagem
+                        </x-filament::button>
+                    </div>
 
-                        <div class="mt-4 flex flex-col items-start gap-4">
-                            <div class="relative w-full max-w-xl overflow-hidden rounded-lg border border-gray-200 bg-gray-50" x-ref="preview">
+                    <div class="mt-4 flex flex-col items-start gap-4">
+                        <div class="relative w-full max-w-xl overflow-hidden rounded-lg border border-gray-200 bg-gray-50" x-ref="preview">
                                 <template x-if="!imageUrl">
                                     <div class="flex h-64 w-full items-center justify-center text-sm text-gray-400">
                                         Envie uma imagem para ver a previa.
@@ -177,6 +182,13 @@
                     },
                 };
             }
+
+            document.addEventListener('meta-ads-image-picker', () => {
+                const input = document.getElementById('meta-ads-image-input');
+                if (input && !input.disabled) {
+                    input.click();
+                }
+            });
         </script>
     @endpush
 </x-filament::page>
