@@ -7,7 +7,11 @@ use App\Http\Controllers\MetaOAuthController;
 use App\Http\Controllers\MetaSdkController;
 
 Route::get('/', function () {
-    return view('welcome');
+    if (auth()->check()) {
+        return redirect()->to('dashboard');
+    }
+
+    return redirect()->to('dashboard/login');
 })->name('home');
 
 
