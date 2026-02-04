@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Laravel\Fortify\Features;
 use Livewire\Volt\Volt;
+use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\MetaOAuthController;
 use App\Http\Controllers\MetaSdkController;
 
@@ -16,6 +17,12 @@ Route::get('/', function () {
 
 
 Route::middleware(['auth'])->group(function () {
+    Route::prefix('adm')->name('admin.')->group(function () {
+        Route::get('usuarios', [UserController::class, 'index'])->name('users.index');
+        Route::post('usuarios', [UserController::class, 'store'])->name('users.store');
+        Route::put('usuarios/{user}', [UserController::class, 'update'])->name('users.update');
+    });
+
     Route::redirect('settings', 'settings/profile');
 
     Volt::route('settings/profile', 'settings.profile')->name('profile.edit');
