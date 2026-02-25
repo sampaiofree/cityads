@@ -207,9 +207,8 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                         Textarea::make('overlay_text')
                             ->label('Texto do bloco')
                             ->rows(2)
-                            ->required()
                             ->live()
-                            ->helperText('Use {cidade} como placeholder.'),
+                            ->helperText('Opcional. Use {cidade} como placeholder.'),
                         ColorPicker::make('overlay_text_color')
                             ->label('Cor do texto')
                             ->required()
@@ -299,7 +298,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                 'whatsapp_number' => $whatsappNumber,
                 'state' => $data['state'] ?? null,
                 'city_ids' => $data['city_ids'] ?? [],
-                'overlay_text' => $data['overlay_text'] ?? '{cidade}',
+                'overlay_text' => $data['overlay_text'] ?? '',
                 'overlay_text_color' => $data['overlay_text_color'] ?? '#ffffff',
                 'overlay_bg_color' => $data['overlay_bg_transparent'] ? 'transparent' : ($data['overlay_bg_color'] ?? '#000000'),
                 'overlay_bg_transparent' => (bool) $data['overlay_bg_transparent'],
@@ -326,7 +325,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->title('Lote enviado para processamento.')
             ->send();
 
-        $this->data['image_path'] = null;
         $this->data['image_preview_url'] = null;
     }
 

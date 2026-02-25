@@ -32,8 +32,8 @@
                             overlayText: @entangle('data.overlay_text'),
                             textColor: @entangle('data.overlay_text_color'),
                             bgColor: @entangle('data.overlay_bg_color'),
-                            posX: @entangle('data.overlay_position_x').defer,
-                            posY: @entangle('data.overlay_position_y').defer,
+                            posX: @entangle('data.overlay_position_x'),
+                            posY: @entangle('data.overlay_position_y'),
                         })"
                         class="w-full"
                     >
@@ -55,12 +55,13 @@
                                 </template>
 
                                 <template x-if="imageUrl">
-                                    <div class="relative">
+                                    <div class="relative" x-ref="canvas">
                                         <img :src="imageUrl" alt="Previa" class="block w-full h-auto" />
                                         <div
                                             x-ref="block"
                                             class="absolute select-none cursor-move px-1 py-0.5 text-base font-semibold shadow-sm"
                                             :style="overlayStyle"
+                                            x-show="displayText !== ''"
                                             @pointerdown="startDrag"
                                         >
                                             <span x-text="displayText"></span>
@@ -105,10 +106,11 @@
                     get displayText() {
                         const text = (this.overlayText || '').replace(/\s+/g, ' ').trim();
                         const replaced = text.replace(/\{cidade\}/gi, 'NOME DA CIDADE');
-                        return replaced !== '' ? replaced : 'NOME DA CIDADE';
+                        return replaced.toLocaleUpperCase('pt-BR');
                     },
                     get overlayStyle() {
-                        const bg = this.hexToRgba(this.bgColor || '#000000', 0.7);
+                        const isTransparent = !this.bgColor || this.bgColor === 'transparent';
+                        const bg = isTransparent ? 'transparent' : this.hexToRgba(this.bgColor || '#000000', 0.7);
                         const color = this.textColor || '#ffffff';
                         const x = this.posX ?? 50;
                         const y = this.posY ?? 12;
@@ -125,7 +127,7 @@
                         `;
                     },
                     startDrag(event) {
-                        if (!this.$refs.preview || !this.$refs.block) {
+                        if (!this.$refs.canvas || !this.$refs.block) {
                             return;
                         }
                         event.preventDefault();
@@ -140,7 +142,7 @@
                         if (!this.dragging) {
                             return;
                         }
-                        const rect = this.$refs.preview.getBoundingClientRect();
+                        const rect = this.$refs.canvas.getBoundingClientRect();
                         const blockRect = this.$refs.block.getBoundingClientRect();
                         if (!rect.width || !rect.height) {
                             return;
@@ -189,6 +191,7 @@
                     input.click();
                 }
             });
+
         </script>
     @endpush
 </x-filament::page>

@@ -182,9 +182,9 @@ class ProcessMetaAdBatch implements ShouldQueue
                     continue;
                 }
 
-                $overlayTextTemplate = Arr::get($batch->settings, 'overlay_text', '{cidade}');
-                if (!is_string($overlayTextTemplate) || trim($overlayTextTemplate) === '') {
-                    $overlayTextTemplate = '{cidade}';
+                $overlayTextTemplate = Arr::get($batch->settings, 'overlay_text', '');
+                if (!is_string($overlayTextTemplate)) {
+                    $overlayTextTemplate = '';
                 }
                 $overlayText = str_replace('{cidade}', $city->name, $overlayTextTemplate);
 
