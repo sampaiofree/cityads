@@ -23,6 +23,7 @@
                 <thead class="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300">
                     <tr>
                         <th class="px-4 py-3">Cidade</th>
+                        <th class="px-4 py-3">Fonte</th>
                         <th class="px-4 py-3">Status</th>
                         <th class="px-4 py-3">Erro</th>
                     </tr>
@@ -33,6 +34,13 @@
                             <td class="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">
                                 {{ $item->city_name }}
                             </td>
+                            <td class="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                                @if (filled($item->creative_source_path))
+                                    #{{ ((int) ($item->creative_source_index ?? 0)) + 1 }} - {{ basename($item->creative_source_path) }}
+                                @else
+                                    -
+                                @endif
+                            </td>
                             <td class="px-4 py-3 text-zinc-700 dark:text-zinc-200">
                                 {{ $item->status }}
                             </td>
@@ -42,7 +50,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="3" class="px-4 py-6 text-center text-zinc-500 dark:text-zinc-400">
+                            <td colspan="4" class="px-4 py-6 text-center text-zinc-500 dark:text-zinc-400">
                                 Nenhum item encontrado para este lote.
                             </td>
                         </tr>

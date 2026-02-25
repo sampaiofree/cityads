@@ -418,6 +418,34 @@ public function createAdSet(
         return $hash;
     }
 
+    public function uploadVideo(string $accessToken, string $adAccountId, string $filePath, array $context = []): ?string
+    {
+        $stepContext = $this->withStep($context, 'upload_video');
+        $this->logMeta('info', 'MetaAdsService upload video', array_merge($stepContext, [
+            'file' => basename($filePath),
+        ]));
+
+        $response = $this->client->postWithFile(
+            sprintf('%s/advideos', $this->formatAdAccountId($adAccountId)),
+            $accessToken,
+            'source',
+            $filePath,
+            [],
+            $stepContext
+        );
+
+        $videoId = $response['id'] ?? null;
+        if ($videoId) {
+            $this->logMeta('info', 'MetaAdsService upload video result', array_merge($stepContext, [
+                'video_id' => $videoId,
+            ]));
+        } else {
+            $this->logMeta('warning', 'MetaAdsService upload video failed', $stepContext);
+        }
+
+        return $videoId;
+    }
+
     public function createCreative(
         string $accessToken,
         string $adAccountId,
@@ -499,6 +527,92 @@ public function createAdSet(
             ]));
         } else {
             $this->logMeta('warning', 'MetaAdsService create creative failed', $stepContext);
+        }
+
+        return $id;
+    }
+
+    public function createVideoCreative(
+        string $accessToken,
+        string $adAccountId,
+        string $name,
+        string $title,
+        string $body,
+        string $url,
+        string $videoId,
+        string $pageId,
+        ?string $instagramActorId,
+        string $enrollStatus,
+        array $context = [],
+        array $options = []
+    ): ?string {
+        $stepContext = $this->withStep($context, 'create_video_creative');
+        $this->logMeta('info', 'MetaAdsService create video creative', array_merge($stepContext, [
+            'name' => $name,
+            'video_id' => $videoId,
+            'enroll_status' => $enrollStatus,
+        ]));
+
+        $destinationType = $options['destination_type'] ?? null;
+        $whatsappNumber = $options['whatsapp_number'] ?? null;
+        if (is_string($whatsappNumber)) {
+            $whatsappNumber = preg_replace('/\D/', '', $whatsappNumber);
+        }
+
+        if ($whatsappNumber === '') {
+            $whatsappNumber = null;
+        }
+
+        $payloadLink = $options['link'] ?? $url;
+        if ($destinationType === 'WHATSAPP') {
+            $payloadLink = sprintf('https://www.facebook.com/%s', $pageId);
+        }
+
+        $callToAction = [
+            'type' => $destinationType === 'WHATSAPP' ? 'WHATSAPP_MESSAGE' : 'LEARN_MORE',
+            'value' => [
+                'link' => $payloadLink,
+            ],
+        ];
+
+        if ($destinationType === 'WHATSAPP') {
+            $callToAction['value'] = [
+                'app_destination' => 'WHATSAPP',
+                'link' => $payloadLink,
+            ];
+
+            if ($whatsappNumber) {
+                $callToAction['value']['whatsapp_number'] = $whatsappNumber;
+            }
+        }
+
+        $storySpec = [
+            'page_id' => $pageId,
+            'video_data' => [
+                'video_id' => $videoId,
+                'link' => $payloadLink,
+                'message' => $body,
+                'title' => $title,
+                'call_to_action' => $callToAction,
+            ],
+        ];
+
+        if ($instagramActorId) {
+            $storySpec['instagram_actor_id'] = $instagramActorId;
+        }
+
+        $response = $this->client->post(sprintf('%s/adcreatives', $this->formatAdAccountId($adAccountId)), $accessToken, [
+            'name' => $name,
+            'object_story_spec' => json_encode($storySpec),
+        ], $stepContext);
+
+        $id = $response['id'] ?? null;
+        if ($id) {
+            $this->logMeta('info', 'MetaAdsService create video creative result', array_merge($stepContext, [
+                'creative_id' => $id,
+            ]));
+        } else {
+            $this->logMeta('warning', 'MetaAdsService create video creative failed', $stepContext);
         }
 
         return $id;

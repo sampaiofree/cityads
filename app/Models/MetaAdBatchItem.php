@@ -17,6 +17,8 @@ class MetaAdBatchItem extends Model
         'ad_id',
         'ad_creative_id',
         'image_hash',
+        'creative_source_path',
+        'creative_source_index',
         'status',
         'error_message',
     ];

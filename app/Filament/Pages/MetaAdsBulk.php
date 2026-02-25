@@ -62,6 +62,10 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             'start_at' => now()->addMinutes(10),
             'title_template' => '{cidade} RECEBE +40 CURSOS PROFISSIONALIZANTES',
             'body_template' => "Programa liberado para {cidade}.\n\nSem mensalidades e sem custo de material.\n\nClique em \"Saiba mais\" e garanta sua vaga.",
+            'creative_source_mode' => 'single_media',
+            'creative_media_type' => 'image',
+            'rotation_image_paths' => [],
+            'rotation_image_preview_urls' => [],
             'overlay_text' => '{cidade}',
             'overlay_text_color' => '#ffffff',
             'overlay_bg_color' => '#000000',
@@ -159,36 +163,86 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                     ->columns(1),
                 Section::make('Criativo')
                     ->schema([
+                        Select::make('creative_source_mode')
+                            ->label('Modo do criativo')
+                            ->options([
+                                'single_media' => 'Midia unica (imagem ou video)',
+                                'image_rotation' => 'Rodizio de imagens (ate 30)',
+                            ])
+                            ->required()
+                            ->default('single_media')
+                            ->live()
+                            ->afterStateUpdated(function ($state, callable $set) {
+                                if ($this->normalizeCreativeSourceMode($state) === 'image_rotation') {
+                                    $set('creative_media_type', 'image');
+                                }
+                            }),
                         FileUpload::make('image_path')
-                            ->label('Imagem do anuncio')
+                            ->label('Midia do anuncio (imagem ou video)')
                             ->disk('public')
                             ->directory('meta_ads/source')
-                            ->image()
+                            ->acceptedFileTypes(['image/*', 'video/*'])
                             ->extraInputAttributes(['id' => 'meta-ads-image-input'])
                             ->deletable()
                             ->nullable()
-                            ->maxSize(2048)
+                            ->maxSize(51200)
                             ->live()
                             ->afterStateUpdated(function ($state, callable $set) {
+                                $set('creative_media_type', $this->detectCreativeMediaTypeFromUploadState($state));
+
                                 if ($state instanceof TemporaryUploadedFile) {
-                                    $set('image_preview_url', $state->temporaryUrl());
+                                    try {
+                                        $set('image_preview_url', $state->temporaryUrl());
+                                    } catch (Throwable) {
+                                        $set('image_preview_url', null);
+                                    }
                                     return;
                                 }
 
                                 if (is_array($state)) {
                                     $file = reset($state);
                                     if ($file instanceof TemporaryUploadedFile) {
-                                        $set('image_preview_url', $file->temporaryUrl());
+                                        try {
+                                            $set('image_preview_url', $file->temporaryUrl());
+                                        } catch (Throwable) {
+                                            $set('image_preview_url', null);
+                                        }
                                         return;
                                     }
                                 }
 
                                 $set('image_preview_url', null);
                             })
+                            ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'single_media')
                             ->disabled(fn (Get $get) => blank($get('state')) && empty($get('city_ids')))
-                            ->helperText('Selecione um estado ou cidades antes de enviar a imagem.')
-                            ->required(),
+                            ->helperText('Selecione um estado ou cidades antes de enviar a midia. Videos nao recebem bloco de texto na imagem.')
+                            ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'single_media'),
+                        FileUpload::make('rotation_image_paths')
+                            ->label('Imagens do rodizio (ate 30)')
+                            ->disk('public')
+                            ->directory('meta_ads/source')
+                            ->multiple()
+                            ->maxFiles(30)
+                            ->image()
+                            ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
+                            ->extraInputAttributes(['id' => 'meta-ads-rotation-image-input'])
+                            ->deletable()
+                            ->nullable()
+                            ->maxSize(5120)
+                            ->live()
+                            ->afterStateUpdated(function ($state, callable $set) {
+                                $set('creative_media_type', 'image');
+                                $set('rotation_image_preview_urls', $this->detectRotationImagePreviewUrlsFromUploadState($state));
+                            })
+                            ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation')
+                            ->disabled(fn (Get $get) => blank($get('state')) && empty($get('city_ids')))
+                            ->helperText('Ordem do upload define o rodizio. Aceita JPG, PNG e WEBP (ate 30, 5 MB cada). Recomenda-se usar a mesma proporcao em todas as imagens.')
+                            ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation'),
+                        Hidden::make('creative_media_type')
+                            ->default('image'),
                         Hidden::make('image_preview_url')
+                            ->dehydrated(false),
+                        Hidden::make('rotation_image_preview_urls')
                             ->dehydrated(false),
                         TextInput::make('title_template')
                             ->label('Titulo')
@@ -202,7 +256,11 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                     ])
                     ->columns(1),
                 Section::make('Bloco de texto na imagem')
-                    ->description('Arraste o bloco na previa para posicionar.')
+                    ->description(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation'
+                        ? 'Arraste o bloco na previa para posicionar. Bloco e posicao serao aplicados igualmente em todas as imagens do rodizio.'
+                        : 'Arraste o bloco na previa para posicionar.')
+                    ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation'
+                        || (($get('creative_source_mode') ?? 'single_media') === 'single_media' && ($get('creative_media_type') ?? 'image') !== 'video'))
                     ->schema([
                         Textarea::make('overlay_text')
                             ->label('Texto do bloco')
@@ -263,6 +321,10 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $destinationType = $data['destination_type'] ?? null;
         $whatsappNumber = null;
         $urlTemplate = $data['url_template'] ?? '';
+        $creativeSourceMode = $this->normalizeCreativeSourceMode($data['creative_source_mode'] ?? null);
+        $creativeImagePaths = [];
+        $imagePath = is_array($data['image_path'] ?? null) ? (string) (reset($data['image_path']) ?: '') : (string) ($data['image_path'] ?? '');
+        $creativeMediaType = 'image';
 
         if ($destinationType === 'WHATSAPP') {
             $whatsappNumber = is_string($data['whatsapp_number'] ?? null)
@@ -272,6 +334,41 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             $urlTemplate = !empty($data['page_id'])
                 ? sprintf('https://www.facebook.com/%s', $data['page_id'])
                 : '';
+        }
+
+        if ($creativeSourceMode === 'image_rotation') {
+            $creativeImagePaths = $this->normalizeRotationImagePaths($data['rotation_image_paths'] ?? []);
+
+            if (count($creativeImagePaths) < 1 || count($creativeImagePaths) > 30) {
+                Notification::make()
+                    ->danger()
+                    ->title('Envie de 1 a 30 imagens para o rodizio.')
+                    ->send();
+                return;
+            }
+
+            foreach ($creativeImagePaths as $path) {
+                if (!$this->isSupportedRotationImagePath($path)) {
+                    Notification::make()
+                        ->danger()
+                        ->title('Rodizio aceita apenas imagens JPG, PNG ou WEBP.')
+                        ->send();
+                    return;
+                }
+            }
+
+            $imagePath = (string) ($creativeImagePaths[0] ?? '');
+            $creativeMediaType = 'image';
+        } else {
+            if ($imagePath === '') {
+                Notification::make()
+                    ->danger()
+                    ->title('Envie uma midia para criar o lote.')
+                    ->send();
+                return;
+            }
+
+            $creativeMediaType = $this->normalizeCreativeMediaType($data['creative_media_type'] ?? $imagePath);
         }
 
         $user = Auth::user();
@@ -290,7 +387,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             'url_template' => $urlTemplate,
             'title_template' => $data['title_template'],
             'body_template' => $data['body_template'],
-            'image_path' => $data['image_path'],
+            'image_path' => $imagePath,
             'auto_activate' => (bool) ($data['auto_activate'] ?? false),
             'daily_budget_cents' => (int) round(((float) $data['daily_budget']) * 100),
             'settings' => [
@@ -298,6 +395,11 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                 'whatsapp_number' => $whatsappNumber,
                 'state' => $data['state'] ?? null,
                 'city_ids' => $data['city_ids'] ?? [],
+                'creative_source_mode' => $creativeSourceMode,
+                'creative_media_type' => $creativeMediaType,
+                'creative_image_paths' => $creativeImagePaths,
+                'creative_rotation_strategy' => 'round_robin',
+                'creative_city_order' => 'alphabetical',
                 'overlay_text' => $data['overlay_text'] ?? '',
                 'overlay_text_color' => $data['overlay_text_color'] ?? '#ffffff',
                 'overlay_bg_color' => $data['overlay_bg_transparent'] ? 'transparent' : ($data['overlay_bg_color'] ?? '#000000'),
@@ -326,12 +428,22 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->send();
 
         $this->data['image_preview_url'] = null;
+        $this->data['rotation_image_preview_urls'] = [];
     }
 
     public function addImage(): void
     {
+        $mode = $this->normalizeCreativeSourceMode($this->data['creative_source_mode'] ?? null);
+
+        if ($mode === 'image_rotation') {
+            $this->data['creative_media_type'] = 'image';
+            $this->dispatch('meta-ads-rotation-image-picker');
+            return;
+        }
+
         $this->data['image_path'] = null;
         $this->data['image_preview_url'] = null;
+        $this->data['creative_media_type'] = 'image';
         $this->dispatch('meta-ads-image-picker');
     }
 
@@ -474,6 +586,217 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         }
 
         return null;
+    }
+
+    public function getRotationPreviewSampleRowsProperty(): array
+    {
+        return $this->buildRotationPreviewMapping()['rows'];
+    }
+
+    public function getRotationPreviewTotalCitiesProperty(): int
+    {
+        return $this->buildRotationPreviewMapping()['total'];
+    }
+
+    public function getRotationPreviewImageItemsProperty(): array
+    {
+        $paths = $this->normalizeRotationImagePaths($this->data['rotation_image_paths'] ?? []);
+
+        return collect($paths)
+            ->values()
+            ->map(fn (string $path, int $index) => [
+                'index' => $index,
+                'number' => $index + 1,
+                'path' => $path,
+                'name' => basename($path),
+            ])
+            ->all();
+    }
+
+    private function buildRotationPreviewMapping(): array
+    {
+        if ($this->normalizeCreativeSourceMode($this->data['creative_source_mode'] ?? null) !== 'image_rotation') {
+            return ['rows' => [], 'total' => 0];
+        }
+
+        $imagePaths = $this->normalizeRotationImagePaths($this->data['rotation_image_paths'] ?? []);
+        $imageCount = count($imagePaths);
+
+        if ($imageCount === 0) {
+            return ['rows' => [], 'total' => 0];
+        }
+
+        $cities = $this->resolvePreviewCities();
+        $total = $cities->count();
+
+        $rows = $cities
+            ->values()
+            ->take(10)
+            ->map(function (City $city, int $cityIndex) use ($imagePaths, $imageCount) {
+                $imageIndex = $cityIndex % $imageCount;
+                return [
+                    'city' => $city->name,
+                    'state' => $city->state,
+                    'image_index' => $imageIndex,
+                    'image_number' => $imageIndex + 1,
+                    'image_path' => $imagePaths[$imageIndex],
+                    'image_name' => basename($imagePaths[$imageIndex]),
+                ];
+            })
+            ->all();
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+        ];
+    }
+
+    private function resolvePreviewCities()
+    {
+        $state = $this->data['state'] ?? null;
+        $cityIds = array_values(array_filter((array) ($this->data['city_ids'] ?? [])));
+
+        if (is_string($state) && trim($state) !== '') {
+            $stateMatch = $this->resolvePreviewStateMatch($state);
+
+            return City::query()
+                ->where('state', $stateMatch ?: $state)
+                ->orderBy('name')
+                ->get();
+        }
+
+        if (empty($cityIds)) {
+            return collect();
+        }
+
+        return City::query()
+            ->whereIn('id', $cityIds)
+            ->orderBy('name')
+            ->get();
+    }
+
+    private function resolvePreviewStateMatch(string $state): ?string
+    {
+        $normalized = Str::ascii(Str::lower(trim($state)));
+        if ($normalized === '') {
+            return null;
+        }
+
+        $states = City::query()->select('state')->distinct()->pluck('state');
+        foreach ($states as $candidate) {
+            if (Str::ascii(Str::lower((string) $candidate)) === $normalized) {
+                return (string) $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeCreativeSourceMode(mixed $value): string
+    {
+        return is_string($value) && trim($value) === 'image_rotation'
+            ? 'image_rotation'
+            : 'single_media';
+    }
+
+    private function normalizeCreativeMediaType(mixed $value): string
+    {
+        if (is_string($value)) {
+            $normalized = Str::lower(trim($value));
+            if ($normalized === 'video') {
+                return 'video';
+            }
+        }
+
+        if (is_string($value) && $value !== '') {
+            $extension = Str::lower(pathinfo($value, PATHINFO_EXTENSION));
+            if (in_array($extension, ['mp4', 'mov', 'avi', 'm4v', 'webm'], true)) {
+                return 'video';
+            }
+        }
+
+        return 'image';
+    }
+
+    private function normalizeRotationImagePaths(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $paths = [];
+
+        foreach ($value as $item) {
+            if (is_string($item) && trim($item) !== '') {
+                $paths[] = trim($item);
+            }
+        }
+
+        return array_values($paths);
+    }
+
+    private function isSupportedRotationImagePath(string $path): bool
+    {
+        $extension = Str::lower(pathinfo($path, PATHINFO_EXTENSION));
+
+        return in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true);
+    }
+
+    private function detectCreativeMediaTypeFromUploadState(mixed $state): string
+    {
+        if ($state instanceof TemporaryUploadedFile) {
+            $mimeType = Str::lower((string) ($state->getMimeType() ?? ''));
+            return Str::startsWith($mimeType, 'video/') ? 'video' : 'image';
+        }
+
+        if (is_array($state)) {
+            $file = reset($state);
+            if ($file instanceof TemporaryUploadedFile) {
+                $mimeType = Str::lower((string) ($file->getMimeType() ?? ''));
+                return Str::startsWith($mimeType, 'video/') ? 'video' : 'image';
+            }
+        }
+
+        if (is_string($state) && $state !== '') {
+            return $this->normalizeCreativeMediaType($state);
+        }
+
+        return 'image';
+    }
+
+    private function detectRotationImagePreviewUrlsFromUploadState(mixed $state): array
+    {
+        if ($state instanceof TemporaryUploadedFile) {
+            try {
+                return [$state->temporaryUrl()];
+            } catch (Throwable) {
+                return [];
+            }
+        }
+
+        if (!is_array($state)) {
+            return [];
+        }
+
+        $urls = [];
+
+        foreach ($state as $item) {
+            if ($item instanceof TemporaryUploadedFile) {
+                try {
+                    $urls[] = $item->temporaryUrl();
+                } catch (Throwable) {
+                    continue;
+                }
+
+                continue;
+            }
+
+            if (is_string($item) && trim($item) !== '') {
+                $urls[] = Storage::disk('public')->url($item);
+            }
+        }
+
+        return array_values($urls);
     }
 
     private function connection(): ?MetaConnection

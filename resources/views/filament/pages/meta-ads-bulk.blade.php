@@ -27,8 +27,12 @@
                     <div
                         x-data="metaOverlayPreview({
                             storageBaseUrl: @js(asset('storage')),
+                            sourceMode: @entangle('data.creative_source_mode'),
                             imagePath: @entangle('data.image_path'),
                             imagePreviewUrl: @entangle('data.image_preview_url'),
+                            rotationImagePaths: @entangle('data.rotation_image_paths'),
+                            rotationImagePreviewUrls: @entangle('data.rotation_image_preview_urls'),
+                            mediaType: @entangle('data.creative_media_type'),
                             overlayText: @entangle('data.overlay_text'),
                             textColor: @entangle('data.overlay_text_color'),
                             bgColor: @entangle('data.overlay_bg_color'),
@@ -42,7 +46,7 @@
                     </div>
                     <div class="mt-3">
                         <x-filament::button type="button" size="sm" color="gray" wire:click="addImage">
-                            Adicionar imagem
+                            Adicionar midia
                         </x-filament::button>
                     </div>
 
@@ -50,11 +54,22 @@
                         <div class="relative w-full max-w-xl overflow-hidden rounded-lg border border-gray-200 bg-gray-50" x-ref="preview">
                                 <template x-if="!imageUrl">
                                     <div class="flex h-64 w-full items-center justify-center text-sm text-gray-400">
-                                        Envie uma imagem para ver a previa.
+                                        Envie uma midia para ver a previa.
                                     </div>
                                 </template>
 
-                                <template x-if="imageUrl">
+                                <template x-if="imageUrl && isVideoMedia">
+                                    <div class="space-y-2">
+                                        <video :src="imageUrl" controls playsinline muted preload="metadata" class="block w-full h-auto rounded">
+                                            Seu navegador nao suporta video.
+                                        </video>
+                                        <p class="text-xs text-gray-500">
+                                            Videos nao recebem bloco de texto/placeholder {cidade}.
+                                        </p>
+                                    </div>
+                                </template>
+
+                                <template x-if="imageUrl && !isVideoMedia">
                                     <div class="relative" x-ref="canvas">
                                         <img :src="imageUrl" alt="Previa" class="block w-full h-auto" />
                                         <div
@@ -69,6 +84,56 @@
                                     </div>
                                 </template>
                             </div>
+
+                            @if (data_get($this->data, 'creative_source_mode', 'single_media') === 'image_rotation')
+                                @php($rotationPreviewImageItems = $this->rotationPreviewImageItems)
+                                @php($rotationPreviewSampleRows = $this->rotationPreviewSampleRows)
+                                @php($rotationPreviewTotalCities = $this->rotationPreviewTotalCities)
+                                <div class="w-full max-w-xl rounded-lg border border-gray-200 bg-white p-3">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                        Ordem das imagens (upload)
+                                    </p>
+                                    @if (empty($rotationPreviewImageItems))
+                                        <p class="mt-2 text-sm text-gray-500">Nenhuma imagem selecionada para o rodizio.</p>
+                                    @else
+                                        <ul class="mt-2 space-y-1 text-sm text-gray-700">
+                                            @foreach ($rotationPreviewImageItems as $image)
+                                                <li>
+                                                    <span class="font-medium">#{{ $image['number'] }}</span>
+                                                    <span class="text-gray-600">{{ $image['name'] }}</span>
+                                                </li>
+                                            @endforeach
+                                        </ul>
+                                        <p class="mt-2 text-xs text-gray-500">
+                                            Recomendacao: use a mesma proporcao em todas as imagens para manter o posicionamento visual consistente.
+                                        </p>
+                                    @endif
+                                </div>
+
+                                <div class="w-full max-w-xl rounded-lg border border-gray-200 bg-white p-3">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                        Amostra do rodizio (primeiras {{ count($rotationPreviewSampleRows) }} cidades)
+                                    </p>
+                                    @if (empty($rotationPreviewSampleRows))
+                                        <p class="mt-2 text-sm text-gray-500">Selecione um estado ou cidades e envie imagens para visualizar o rodizio.</p>
+                                    @else
+                                        <ul class="mt-2 space-y-1 text-sm text-gray-700">
+                                            @foreach ($rotationPreviewSampleRows as $row)
+                                                <li>
+                                                    <span class="font-medium">{{ $row['city'] }}</span>
+                                                    <span class="text-gray-500">({{ $row['state'] }})</span>
+                                                    <span class="text-gray-600">-> Imagem #{{ $row['image_number'] }}</span>
+                                                </li>
+                                            @endforeach
+                                        </ul>
+                                        @if ($rotationPreviewTotalCities > count($rotationPreviewSampleRows))
+                                            <p class="mt-2 text-xs text-gray-500">
+                                                Mostrando {{ count($rotationPreviewSampleRows) }} de {{ $rotationPreviewTotalCities }} cidades em ordem alfabetica.
+                                            </p>
+                                        @endif
+                                    @endif
+                                </div>
+                            @endif
                         </div>
                     </div>
                 </x-filament::section>
@@ -84,8 +149,12 @@
             function metaOverlayPreview(config) {
                 return {
                     storageBaseUrl: config.storageBaseUrl,
+                    sourceMode: config.sourceMode,
                     imagePath: config.imagePath,
                     imagePreviewUrl: config.imagePreviewUrl,
+                    rotationImagePaths: config.rotationImagePaths,
+                    rotationImagePreviewUrls: config.rotationImagePreviewUrls,
+                    mediaType: config.mediaType,
                     overlayText: config.overlayText,
                     textColor: config.textColor,
                     bgColor: config.bgColor,
@@ -95,6 +164,22 @@
                     moveHandler: null,
                     upHandler: null,
                     get imageUrl() {
+                        if ((this.sourceMode || 'single_media') === 'image_rotation') {
+                            const previewUrls = Array.isArray(this.rotationImagePreviewUrls) ? this.rotationImagePreviewUrls : [];
+                            const previewUrl = previewUrls.find((url) => !!url);
+                            if (previewUrl) {
+                                return previewUrl;
+                            }
+
+                            const paths = Array.isArray(this.rotationImagePaths) ? this.rotationImagePaths : [];
+                            const firstPath = paths.find((path) => !!path);
+                            if (firstPath) {
+                                return `${this.storageBaseUrl}/${firstPath}`;
+                            }
+
+                            return null;
+                        }
+
                         if (this.imagePreviewUrl) {
                             return this.imagePreviewUrl;
                         }
@@ -102,6 +187,18 @@
                             return null;
                         }
                         return `${this.storageBaseUrl}/${this.imagePath}`;
+                    },
+                    get isVideoMedia() {
+                        if ((this.sourceMode || 'single_media') === 'image_rotation') {
+                            return false;
+                        }
+
+                        if ((this.mediaType || '').toLowerCase() === 'video') {
+                            return true;
+                        }
+
+                        const source = (this.imagePreviewUrl || this.imagePath || '').toLowerCase();
+                        return ['.mp4', '.mov', '.avi', '.m4v', '.webm'].some((ext) => source.includes(ext));
                     },
                     get displayText() {
                         const text = (this.overlayText || '').replace(/\s+/g, ' ').trim();
@@ -187,6 +284,13 @@
 
             document.addEventListener('meta-ads-image-picker', () => {
                 const input = document.getElementById('meta-ads-image-input');
+                if (input && !input.disabled) {
+                    input.click();
+                }
+            });
+
+            document.addEventListener('meta-ads-rotation-image-picker', () => {
+                const input = document.getElementById('meta-ads-rotation-image-input');
                 if (input && !input.disabled) {
                     input.click();
                 }
