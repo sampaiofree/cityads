@@ -28,6 +28,7 @@
                         x-data="metaOverlayPreview({
                             storageBaseUrl: @js(asset('storage')),
                             sourceMode: @entangle('data.creative_source_mode'),
+                            existingPostId: @entangle('data.existing_post_id'),
                             imagePath: @entangle('data.image_path'),
                             imagePreviewUrl: @entangle('data.image_preview_url'),
                             rotationImagePaths: @entangle('data.rotation_image_paths'),
@@ -42,9 +43,10 @@
                         class="w-full"
                     >
                     <div class="text-sm text-gray-500">
-                        Arraste o bloco para posicionar o texto sobre a imagem.
+                        <span x-show="!isExistingPostMode">Arraste o bloco para posicionar o texto sobre a imagem.</span>
+                        <span x-show="isExistingPostMode">Modo de post existente: o anuncio usara o mesmo post para todas as cidades.</span>
                     </div>
-                    <div class="mt-3">
+                    <div class="mt-3" x-show="!isExistingPostMode">
                         <x-filament::button type="button" size="sm" color="gray" wire:click="addImage">
                             Adicionar midia
                         </x-filament::button>
@@ -52,13 +54,26 @@
 
                     <div class="mt-4 flex flex-col items-start gap-4">
                         <div class="relative w-full max-w-xl overflow-hidden rounded-lg border border-gray-200 bg-gray-50" x-ref="preview">
-                                <template x-if="!imageUrl">
+                                <template x-if="isExistingPostMode">
+                                    <div class="flex min-h-40 w-full flex-col justify-center gap-2 p-4 text-sm text-gray-600">
+                                        <div class="font-medium text-gray-700">Usando post existente</div>
+                                        <div>
+                                            ID do post:
+                                            <span class="font-mono text-xs" x-text="normalizedExistingPostId || '-'"></span>
+                                        </div>
+                                        <div class="text-xs text-gray-500">
+                                            O mesmo post sera reutilizado em todos os anuncios das cidades selecionadas.
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <template x-if="!isExistingPostMode && !imageUrl">
                                     <div class="flex h-64 w-full items-center justify-center text-sm text-gray-400">
                                         Envie uma midia para ver a previa.
                                     </div>
                                 </template>
 
-                                <template x-if="imageUrl && isVideoMedia">
+                                <template x-if="!isExistingPostMode && imageUrl && isVideoMedia">
                                     <div class="space-y-2">
                                         <video :src="imageUrl" controls playsinline muted preload="metadata" class="block w-full h-auto rounded">
                                             Seu navegador nao suporta video.
@@ -69,7 +84,7 @@
                                     </div>
                                 </template>
 
-                                <template x-if="imageUrl && !isVideoMedia">
+                                <template x-if="!isExistingPostMode && imageUrl && !isVideoMedia">
                                     <div class="relative" x-ref="canvas">
                                         <img :src="imageUrl" alt="Previa" class="block w-full h-auto" />
                                         <div
@@ -150,6 +165,7 @@
                 return {
                     storageBaseUrl: config.storageBaseUrl,
                     sourceMode: config.sourceMode,
+                    existingPostId: config.existingPostId,
                     imagePath: config.imagePath,
                     imagePreviewUrl: config.imagePreviewUrl,
                     rotationImagePaths: config.rotationImagePaths,
@@ -163,7 +179,17 @@
                     dragging: false,
                     moveHandler: null,
                     upHandler: null,
+                    get isExistingPostMode() {
+                        return (this.sourceMode || 'single_media') === 'existing_post';
+                    },
+                    get normalizedExistingPostId() {
+                        return (this.existingPostId || '').toString().trim();
+                    },
                     get imageUrl() {
+                        if (this.isExistingPostMode) {
+                            return null;
+                        }
+
                         if ((this.sourceMode || 'single_media') === 'image_rotation') {
                             const previewUrls = Array.isArray(this.rotationImagePreviewUrls) ? this.rotationImagePreviewUrls : [];
                             const previewUrl = previewUrls.find((url) => !!url);
@@ -189,6 +215,10 @@
                         return `${this.storageBaseUrl}/${this.imagePath}`;
                     },
                     get isVideoMedia() {
+                        if (this.isExistingPostMode) {
+                            return false;
+                        }
+
                         if ((this.sourceMode || 'single_media') === 'image_rotation') {
                             return false;
                         }

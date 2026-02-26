@@ -618,6 +618,36 @@ public function createAdSet(
         return $id;
     }
 
+    public function createExistingPostCreative(
+        string $accessToken,
+        string $adAccountId,
+        string $name,
+        string $objectStoryId,
+        array $context = []
+    ): ?string {
+        $stepContext = $this->withStep($context, 'create_existing_post_creative');
+        $this->logMeta('info', 'MetaAdsService create existing post creative', array_merge($stepContext, [
+            'name' => $name,
+            'object_story_id' => $objectStoryId,
+        ]));
+
+        $response = $this->client->post(sprintf('%s/adcreatives', $this->formatAdAccountId($adAccountId)), $accessToken, [
+            'name' => $name,
+            'object_story_id' => $objectStoryId,
+        ], $stepContext);
+
+        $id = $response['id'] ?? null;
+        if ($id) {
+            $this->logMeta('info', 'MetaAdsService create existing post creative result', array_merge($stepContext, [
+                'creative_id' => $id,
+            ]));
+        } else {
+            $this->logMeta('warning', 'MetaAdsService create existing post creative failed', $stepContext);
+        }
+
+        return $id;
+    }
+
     public function createAd(
         string $accessToken,
         string $adAccountId,

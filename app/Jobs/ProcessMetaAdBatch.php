@@ -99,6 +99,7 @@ class ProcessMetaAdBatch implements ShouldQueue
         $sourceMediaPath = null;
         $rotationImagePaths = [];
         $rotationImageCount = 0;
+        $existingPostId = null;
 
         try {
             $creativeMediaType = $this->resolveCreativeMediaType($batch);
@@ -114,6 +115,8 @@ class ProcessMetaAdBatch implements ShouldQueue
                     $this->resolveBatchSourceMediaPathFromRelative($rotationImagePath);
                 }
                 $rotationImageCount = count($rotationImagePaths);
+            } elseif ($creativeSourceMode === 'existing_post') {
+                $existingPostId = $this->resolveExistingPostId($batch);
             } else {
                 $sourceMediaPath = $this->resolveBatchSourceMediaPath($batch);
             }
@@ -126,6 +129,7 @@ class ProcessMetaAdBatch implements ShouldQueue
             'creative_source_mode' => $creativeSourceMode,
             'creative_media_type' => $creativeMediaType,
             'rotation_image_count' => $rotationImageCount,
+            'existing_post_id' => $existingPostId,
         ]);
 
         if (!$pixelId) {
@@ -192,10 +196,13 @@ class ProcessMetaAdBatch implements ShouldQueue
                 return;
             }
 
-            $selectedSourceIndex = 0;
-            $selectedSourceRelativePath = $batch->image_path;
+            $selectedSourceIndex = null;
+            $selectedSourceRelativePath = null;
 
-            if ($creativeSourceMode === 'image_rotation' && $rotationImageCount > 0) {
+            if ($creativeSourceMode === 'single_media') {
+                $selectedSourceIndex = 0;
+                $selectedSourceRelativePath = $batch->image_path;
+            } elseif ($creativeSourceMode === 'image_rotation' && $rotationImageCount > 0) {
                 $selectedSourceIndex = $cityIndex % $rotationImageCount;
                 $selectedSourceRelativePath = $rotationImagePaths[$selectedSourceIndex] ?? $selectedSourceRelativePath;
             }
@@ -229,7 +236,9 @@ class ProcessMetaAdBatch implements ShouldQueue
                     continue;
                 }
 
-                if ($creativeMediaType === 'video') {
+                if ($creativeSourceMode === 'existing_post') {
+                    // Reuse the same published post in every city-specific ad set.
+                } elseif ($creativeMediaType === 'video') {
                     $videoId = $adsService->uploadVideo($accessToken, $adAccountId, $sourceMediaPath, $itemContext);
 
                     if (!$videoId) {
@@ -299,7 +308,15 @@ class ProcessMetaAdBatch implements ShouldQueue
                 $body = str_replace('{cidade}', $city->name, $batch->body_template);
                 $url = str_replace('{cidade}', $city->name, $batch->url_template);
 
-                if ($creativeMediaType === 'video') {
+                if ($creativeSourceMode === 'existing_post') {
+                    $creativeId = $adsService->createExistingPostCreative(
+                        $accessToken,
+                        $adAccountId,
+                        $adSetName,
+                        (string) $existingPostId,
+                        $itemContext
+                    );
+                } elseif ($creativeMediaType === 'video') {
                     $creativeId = $this->createVideoCreativeWithFallback(
                         $adsService,
                         $accessToken,
@@ -341,7 +358,7 @@ class ProcessMetaAdBatch implements ShouldQueue
                     );
                 }
 
-                if (!$creativeId) {
+                if (!$creativeId && $creativeSourceMode !== 'existing_post') {
                     if ($creativeMediaType === 'video') {
                         $creativeId = $this->createVideoCreativeWithFallback(
                             $adsService,
@@ -519,7 +536,7 @@ class ProcessMetaAdBatch implements ShouldQueue
 
         return is_string($configured) && trim($configured) === 'image_rotation'
             ? 'image_rotation'
-            : 'single_media';
+            : (is_string($configured) && trim($configured) === 'existing_post' ? 'existing_post' : 'single_media');
     }
 
     private function resolveCreativeMediaType(MetaAdBatch $batch): string
@@ -566,6 +583,23 @@ class ProcessMetaAdBatch implements ShouldQueue
         }
 
         return array_values($normalized);
+    }
+
+    private function resolveExistingPostId(MetaAdBatch $batch): string
+    {
+        $postId = Arr::get($batch->settings, 'existing_post_id');
+
+        if (!is_string($postId) || trim($postId) === '') {
+            throw new \RuntimeException('ID do post existente nao informado.');
+        }
+
+        $postId = trim($postId);
+
+        if (preg_match('/^\d+_\d+$/', $postId) !== 1) {
+            throw new \RuntimeException('ID do post existente invalido. Use pagina_post.');
+        }
+
+        return $postId;
     }
 
     private function isSupportedRotationImagePath(string $path): bool

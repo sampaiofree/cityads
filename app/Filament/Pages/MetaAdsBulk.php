@@ -66,6 +66,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             'creative_media_type' => 'image',
             'rotation_image_paths' => [],
             'rotation_image_preview_urls' => [],
+            'existing_post_id' => '',
             'overlay_text' => '{cidade}',
             'overlay_text_color' => '#ffffff',
             'overlay_bg_color' => '#000000',
@@ -140,8 +141,8 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                     ->schema([
                         TextInput::make('url_template')
                             ->label('URL de destino')
-                            ->required(fn () => ($this->data['destination_type'] ?? null) !== 'WHATSAPP')
-                            ->visible(fn () => ($this->data['destination_type'] ?? null) !== 'WHATSAPP')
+                            ->required(fn (Get $get) => ($get('destination_type') ?? null) !== 'WHATSAPP' && ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
+                            ->visible(fn (Get $get) => ($get('destination_type') ?? null) !== 'WHATSAPP' && ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
                             ->reactive()
                             ->helperText('Use {cidade} para inserir o nome da cidade.'),
                         Select::make('state')
@@ -168,13 +169,21 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->options([
                                 'single_media' => 'Midia unica (imagem ou video)',
                                 'image_rotation' => 'Rodizio de imagens (ate 30)',
+                                'existing_post' => 'Usar post existente (ID)',
                             ])
                             ->required()
                             ->default('single_media')
                             ->live()
                             ->afterStateUpdated(function ($state, callable $set) {
-                                if ($this->normalizeCreativeSourceMode($state) === 'image_rotation') {
+                                $mode = $this->normalizeCreativeSourceMode($state);
+
+                                if ($mode === 'image_rotation') {
                                     $set('creative_media_type', 'image');
+                                }
+
+                                if ($mode === 'existing_post') {
+                                    $set('creative_media_type', 'image');
+                                    $set('image_preview_url', null);
                                 }
                             }),
                         FileUpload::make('image_path')
@@ -238,6 +247,13 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->disabled(fn (Get $get) => blank($get('state')) && empty($get('city_ids')))
                             ->helperText('Ordem do upload define o rodizio. Aceita JPG, PNG e WEBP (ate 30, 5 MB cada). Recomenda-se usar a mesma proporcao em todas as imagens.')
                             ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation'),
+                        TextInput::make('existing_post_id')
+                            ->label('ID do post existente')
+                            ->placeholder('123456789012345_987654321098765 ou apenas 987654321098765')
+                            ->helperText('Informe o object_story_id (pagina_post) ou apenas o ID do post. O mesmo post sera usado para todas as cidades.')
+                            ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'existing_post')
+                            ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'existing_post')
+                            ->live(),
                         Hidden::make('creative_media_type')
                             ->default('image'),
                         Hidden::make('image_preview_url')
@@ -246,11 +262,13 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->dehydrated(false),
                         TextInput::make('title_template')
                             ->label('Titulo')
-                            ->required()
+                            ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
+                            ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
                             ->helperText('Use {cidade} para inserir o nome da cidade.'),
                         Textarea::make('body_template')
                             ->label('Texto do anuncio')
-                            ->required()
+                            ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
+                            ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
                             ->rows(6)
                             ->helperText('Use {cidade} para inserir o nome da cidade.'),
                     ])
@@ -325,6 +343,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $creativeImagePaths = [];
         $imagePath = is_array($data['image_path'] ?? null) ? (string) (reset($data['image_path']) ?: '') : (string) ($data['image_path'] ?? '');
         $creativeMediaType = 'image';
+        $existingPostId = null;
 
         if ($destinationType === 'WHATSAPP') {
             $whatsappNumber = is_string($data['whatsapp_number'] ?? null)
@@ -359,6 +378,22 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
             $imagePath = (string) ($creativeImagePaths[0] ?? '');
             $creativeMediaType = 'image';
+        } elseif ($creativeSourceMode === 'existing_post') {
+            $existingPostId = $this->normalizeExistingPostObjectStoryId(
+                is_string($data['existing_post_id'] ?? null) ? $data['existing_post_id'] : null,
+                is_string($data['page_id'] ?? null) ? $data['page_id'] : null
+            );
+
+            if (!$existingPostId) {
+                Notification::make()
+                    ->danger()
+                    ->title('Informe um ID de post valido (pagina_post ou ID numerico do post).')
+                    ->send();
+                return;
+            }
+
+            $imagePath = '';
+            $creativeMediaType = 'image';
         } else {
             if ($imagePath === '') {
                 Notification::make()
@@ -387,7 +422,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             'url_template' => $urlTemplate,
             'title_template' => $data['title_template'],
             'body_template' => $data['body_template'],
-            'image_path' => $imagePath,
+            'image_path' => $imagePath !== '' ? $imagePath : null,
             'auto_activate' => (bool) ($data['auto_activate'] ?? false),
             'daily_budget_cents' => (int) round(((float) $data['daily_budget']) * 100),
             'settings' => [
@@ -400,6 +435,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                 'creative_image_paths' => $creativeImagePaths,
                 'creative_rotation_strategy' => 'round_robin',
                 'creative_city_order' => 'alphabetical',
+                'existing_post_id' => $existingPostId,
                 'overlay_text' => $data['overlay_text'] ?? '',
                 'overlay_text_color' => $data['overlay_text_color'] ?? '#ffffff',
                 'overlay_bg_color' => $data['overlay_bg_transparent'] ? 'transparent' : ($data['overlay_bg_color'] ?? '#000000'),
@@ -438,6 +474,10 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         if ($mode === 'image_rotation') {
             $this->data['creative_media_type'] = 'image';
             $this->dispatch('meta-ads-rotation-image-picker');
+            return;
+        }
+
+        if ($mode === 'existing_post') {
             return;
         }
 
@@ -694,9 +734,17 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
     private function normalizeCreativeSourceMode(mixed $value): string
     {
-        return is_string($value) && trim($value) === 'image_rotation'
-            ? 'image_rotation'
-            : 'single_media';
+        if (!is_string($value)) {
+            return 'single_media';
+        }
+
+        $normalized = trim($value);
+
+        return match ($normalized) {
+            'image_rotation' => 'image_rotation',
+            'existing_post' => 'existing_post',
+            default => 'single_media',
+        };
     }
 
     private function normalizeCreativeMediaType(mixed $value): string
@@ -740,6 +788,30 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $extension = Str::lower(pathinfo($path, PATHINFO_EXTENSION));
 
         return in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true);
+    }
+
+    private function normalizeExistingPostObjectStoryId(?string $value, ?string $pageId): ?string
+    {
+        $value = is_string($value) ? trim($value) : '';
+        if ($value === '') {
+            return null;
+        }
+
+        if (preg_match('/^\d+_\d+$/', $value) === 1) {
+            return $value;
+        }
+
+        if (preg_match('/^\d+$/', $value) === 1) {
+            $pageId = is_string($pageId) ? trim($pageId) : '';
+
+            if ($pageId === '' || preg_match('/^\d+$/', $pageId) !== 1) {
+                return null;
+            }
+
+            return $pageId . '_' . $value;
+        }
+
+        return null;
     }
 
     private function detectCreativeMediaTypeFromUploadState(mixed $state): string
