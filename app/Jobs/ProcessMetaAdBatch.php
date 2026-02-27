@@ -23,9 +23,12 @@ class ProcessMetaAdBatch implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 1800;
+    // Lotes com muitas cidades podem levar bastante tempo por causa das chamadas ao Meta.
+    public int $timeout = 7200;
 
     public int $tries = 1;
+
+    public bool $failOnTimeout = true;
 
     public function __construct(
         public readonly int $batchId
