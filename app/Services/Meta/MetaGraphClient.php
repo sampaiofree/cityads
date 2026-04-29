@@ -2,6 +2,7 @@
 
 namespace App\Services\Meta;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
@@ -12,6 +13,9 @@ use Throwable;
 class MetaGraphClient
 {
     private const MAX_BODY_LENGTH = 10000;
+
+    private const RETRY_DELAYS_MICROS = [500000, 1500000, 3000000];
+
     private const SENSITIVE_KEYS = [
         'access_token',
         'client_secret',
@@ -22,8 +26,7 @@ class MetaGraphClient
 
     public function __construct(
         private readonly string $version = ''
-    ) {
-    }
+    ) {}
 
     public function get(string $endpoint, string $accessToken, array $query = [], array $context = []): array
     {
@@ -158,20 +161,65 @@ class MetaGraphClient
 
         $logger->debug('MetaGraph request', $baseContext);
 
-        $start = microtime(true);
+        $attempt = 0;
 
-        try {
-            $response = $sender($this->withVerify());
-        } catch (Throwable $exception) {
-            $logger->error('MetaGraph transport error', array_merge($baseContext, [
-                'exception' => $exception->getMessage(),
+        while (true) {
+            $start = microtime(true);
+
+            try {
+                $response = $sender($this->withVerify());
+            } catch (Throwable $exception) {
+                $logger->error('MetaGraph transport error', array_merge($baseContext, [
+                    'attempt' => $attempt + 1,
+                    'exception' => $exception->getMessage(),
+                ]));
+
+                if (! $this->shouldRetryException($exception, $attempt)) {
+                    throw $exception;
+                }
+
+                $this->sleepBeforeRetry($attempt++);
+
+                continue;
+            }
+
+            $this->logResponse($logger, $response, $start, array_merge($baseContext, [
+                'attempt' => $attempt + 1,
             ]));
-            throw $exception;
+
+            if (! $this->shouldRetryResponse($response, $attempt)) {
+                return $this->decode($response);
+            }
+
+            $logger->warning('MetaGraph transient response, retrying', array_merge($baseContext, [
+                'attempt' => $attempt + 1,
+                'status' => $response->status(),
+            ]));
+
+            $this->sleepBeforeRetry($attempt++);
+        }
+    }
+
+    private function shouldRetryException(Throwable $exception, int $attempt): bool
+    {
+        return $attempt < count(self::RETRY_DELAYS_MICROS)
+            && $exception instanceof ConnectionException;
+    }
+
+    private function shouldRetryResponse(Response $response, int $attempt): bool
+    {
+        if ($attempt >= count(self::RETRY_DELAYS_MICROS)) {
+            return false;
         }
 
-        $this->logResponse($logger, $response, $start, $baseContext);
+        return $response->status() === 429 || $response->serverError();
+    }
 
-        return $this->decode($response);
+    private function sleepBeforeRetry(int $attempt): void
+    {
+        $delays = self::RETRY_DELAYS_MICROS;
+
+        usleep($delays[$attempt] ?? $delays[array_key_last($delays)]);
     }
 
     private function logResponse($logger, Response $response, float $start, array $context): void
@@ -197,11 +245,13 @@ class MetaGraphClient
         foreach ($payload as $key => $value) {
             if (in_array($key, self::SENSITIVE_KEYS, true)) {
                 $sanitized[$key] = $this->maskValue($value);
+
                 continue;
             }
 
             if (is_array($value)) {
                 $sanitized[$key] = $this->sanitizePayload($value);
+
                 continue;
             }
 
@@ -213,7 +263,7 @@ class MetaGraphClient
 
     private function maskValue($value): string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return '***';
         }
 
@@ -222,7 +272,7 @@ class MetaGraphClient
             return str_repeat('*', $length);
         }
 
-        return substr($value, 0, 6) . '...' . substr($value, -4);
+        return substr($value, 0, 6).'...'.substr($value, -4);
     }
 
     private function truncateBody(?string $body): ?string
@@ -236,7 +286,7 @@ class MetaGraphClient
 
     private function formatErrorMessage($error, int $status): string
     {
-        if (!is_array($error) || empty($error)) {
+        if (! is_array($error) || empty($error)) {
             return sprintf('Meta API request failed with status %d.', $status);
         }
 

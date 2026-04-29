@@ -12,5 +12,6 @@ class City extends Model
         'name',
         'state',
         'state_code',
+        'meta_city_key',
     ];
 }

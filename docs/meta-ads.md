@@ -11,10 +11,12 @@
 ## Passos basicos
 1) Instale as dependencias do Filament e rode `composer install`/`composer update`.
 2) Rode as migrations para criar tabelas (`php artisan migrate`).
-3) Garanta que o queue worker esta ativo (`php artisan queue:work`).
+3) Garanta que o queue worker esta ativo (`php artisan queue:work --queue=default,meta-ads --tries=1 --timeout=1800 --memory=512`).
 4) Acesse `/admin/meta-ads` e clique em "Conectar Meta".
 5) Preencha o formulario e dispare o lote.
 
 ## Observacoes
 - O texto `{cidade}` sera substituido automaticamente pelo nome da cidade.
 - Se nao houver fonte TTF configurada, o texto sera desenhado com fonte basica do GD.
+- Lotes por estado sao preparados em uma fila e processados em chunks de 25 cidades na fila `meta-ads`.
+- Em producao, configure o `retry_after` da fila para um valor maior que o timeout do worker.
