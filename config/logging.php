@@ -66,9 +66,10 @@ return [
         ],
 
         'meta' => [
-            'driver' => 'single',
+            'driver' => 'daily',
             'path' => storage_path('logs/meta.log'),
-            'level' => env('LOG_LEVEL', 'debug'),
+            'level' => env('META_LOG_LEVEL', env('LOG_LEVEL', 'debug')),
+            'days' => env('META_LOG_DAILY_DAYS', env('LOG_DAILY_DAYS', 14)),
             'replace_placeholders' => true,
         ],
 
