@@ -15,7 +15,7 @@ class ProcessMetaAdBatchChunk implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public const QUEUE = 'meta-ads';
+    public const QUEUE = 'default';
 
     public int $timeout = 1800;
 

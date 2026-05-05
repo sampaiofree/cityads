@@ -88,6 +88,7 @@ test('preparer creates city items and dispatches chunks of twenty five', functio
     Queue::assertPushed(ProcessMetaAdBatchChunk::class, 3);
     Queue::assertPushed(ProcessMetaAdBatchChunk::class, fn (ProcessMetaAdBatchChunk $job) => count($job->itemIds) === 25);
     Queue::assertPushed(ProcessMetaAdBatchChunk::class, fn (ProcessMetaAdBatchChunk $job) => count($job->itemIds) === 10);
+    Queue::assertPushed(ProcessMetaAdBatchChunk::class, fn (ProcessMetaAdBatchChunk $job) => $job->queue === 'default');
 });
 
 test('preparer uploads single video once and stores it on batch settings', function () {
