@@ -125,9 +125,9 @@ class MetaGraphClient
     private function decode(Response $response): array
     {
         $payload = $response->json();
+        $error = is_array($payload) ? Arr::get($payload, 'error') : null;
 
-        if ($response->failed()) {
-            $error = is_array($payload) ? Arr::get($payload, 'error') : null;
+        if ($response->failed() || $error) {
             $message = $this->formatErrorMessage($error, $response->status());
             throw new \RuntimeException($message);
         }
@@ -188,6 +188,12 @@ class MetaGraphClient
             ]));
 
             if (! $this->shouldRetryResponse($response, $attempt)) {
+                if ($response->failed() || $this->hasGraphError($response)) {
+                    $this->logFailedResponse($logger, $response, array_merge($baseContext, [
+                        'attempt' => $attempt + 1,
+                    ]));
+                }
+
                 return $this->decode($response);
             }
 
@@ -236,6 +242,27 @@ class MetaGraphClient
             'graph_error' => $error ? $this->sanitizePayload($error) : null,
             'response' => $this->truncateBody($body),
         ]));
+    }
+
+    private function logFailedResponse($logger, Response $response, array $context): void
+    {
+        $body = $response->body();
+        $payload = $response->json();
+        $error = is_array($payload) ? Arr::get($payload, 'error') : null;
+
+        $logger->warning('MetaGraph failed response', array_merge($context, [
+            'status' => $response->status(),
+            'graph_error' => $error ? $this->sanitizePayload($error) : null,
+            'error_message' => $this->formatErrorMessage($error, $response->status()),
+            'response' => $this->truncateBody($body),
+        ]));
+    }
+
+    private function hasGraphError(Response $response): bool
+    {
+        $payload = $response->json();
+
+        return is_array($payload) && filled(Arr::get($payload, 'error'));
     }
 
     private function sanitizePayload(array $payload): array

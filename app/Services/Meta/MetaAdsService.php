@@ -6,14 +6,20 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use Throwable;
 
 class MetaAdsService
 {
+    private const SENSITIVE_LOG_KEYS = [
+        'access_token',
+        'app_secret',
+        'appsecret_proof',
+        'client_secret',
+        'fb_exchange_token',
+    ];
+
     public function __construct(
         private readonly MetaGraphClient $client
-    ) {
-    }
+    ) {}
 
     public function fetchAdAccounts(string $accessToken, int $userId, array $context = []): array
     {
@@ -28,7 +34,7 @@ class MetaAdsService
             return collect(Arr::get($response, 'data', []))
                 ->mapWithKeys(function (array $account) {
                     $id = $account['account_id'] ?? $account['id'] ?? null;
-                    if (!$id) {
+                    if (! $id) {
                         return [];
                     }
 
@@ -53,7 +59,7 @@ class MetaAdsService
             return collect(Arr::get($response, 'data', []))
                 ->mapWithKeys(function (array $page) {
                     $id = $page['id'] ?? null;
-                    if (!$id) {
+                    if (! $id) {
                         return [];
                     }
 
@@ -67,7 +73,7 @@ class MetaAdsService
 
     public function fetchInstagramAccounts(string $accessToken, int $userId, ?string $adAccountId = null, array $context = []): array
     {
-        $cacheKey = $this->cacheKey($userId, 'instagram_accounts:' . ($adAccountId ? $this->stripActPrefix($adAccountId) : 'all'));
+        $cacheKey = $this->cacheKey($userId, 'instagram_accounts:'.($adAccountId ? $this->stripActPrefix($adAccountId) : 'all'));
 
         return Cache::remember($cacheKey, now()->addHour(), function () use ($accessToken, $context, $adAccountId) {
             $stepContext = $this->withStep($context, 'fetch_instagram_accounts');
@@ -85,7 +91,7 @@ class MetaAdsService
 
                 foreach (Arr::get($response, 'data', []) as $ig) {
                     $id = $ig['id'] ?? null;
-                    if (!$id) {
+                    if (! $id) {
                         continue;
                     }
 
@@ -103,7 +109,7 @@ class MetaAdsService
                 $results = collect(Arr::get($response, 'data', []))
                     ->flatMap(function (array $page) {
                         $ig = $page['instagram_business_account'] ?? null;
-                        if (!$ig || empty($ig['id'])) {
+                        if (! $ig || empty($ig['id'])) {
                             return [];
                         }
 
@@ -124,11 +130,11 @@ class MetaAdsService
 
     public function fetchPixels(string $accessToken, int $userId, string $adAccountId, array $context = []): array
     {
-        if (!$adAccountId) {
+        if (! $adAccountId) {
             return [];
         }
 
-        $cacheKey = $this->cacheKey($userId, 'pixels:' . $this->stripActPrefix($adAccountId));
+        $cacheKey = $this->cacheKey($userId, 'pixels:'.$this->stripActPrefix($adAccountId));
 
         return Cache::remember($cacheKey, now()->addHour(), function () use ($accessToken, $adAccountId, $context) {
             $stepContext = $this->withStep($context, 'fetch_pixels');
@@ -141,7 +147,7 @@ class MetaAdsService
             return collect(Arr::get($response, 'data', []))
                 ->mapWithKeys(function (array $pixel) {
                     $id = $pixel['id'] ?? null;
-                    if (!$id) {
+                    if (! $id) {
                         return [];
                     }
 
@@ -149,47 +155,48 @@ class MetaAdsService
 
                     return [$id => $name];
                 })
-            ->all();
+                ->all();
         });
     }
 
-public function fetchPageWhatsAppNumbers(string $accessToken, string $pageId, array $context = []): array
-{
-    $stepContext = array_merge($context, ['step' => 'fetch_page_whatsapp_numbers', 'page_id' => $pageId]);
-    $numbers = [];
+    public function fetchPageWhatsAppNumbers(string $accessToken, string $pageId, array $context = []): array
+    {
+        $stepContext = array_merge($context, ['step' => 'fetch_page_whatsapp_numbers', 'page_id' => $pageId]);
+        $numbers = [];
 
-    try {
-        // Pedimos todos os campos possÃ­veis de contato da pÃ¡gina
-        $pageRes = $this->client->get($pageId, $accessToken, [
-            'fields' => 'whatsapp_number,name' 
-        ], $stepContext);
+        try {
+            // Pedimos todos os campos possÃ­veis de contato da pÃ¡gina
+            $pageRes = $this->client->get($pageId, $accessToken, [
+                'fields' => 'whatsapp_number,name',
+            ], $stepContext);
 
-        if (!empty($pageRes['whatsapp_number'])) {
-            $num = preg_replace('/\D/', '', $pageRes['whatsapp_number']);
-            $numbers[$num] = $pageRes['whatsapp_number'] . " (Principal da PÃ¡gina)";
+            if (! empty($pageRes['whatsapp_number'])) {
+                $num = preg_replace('/\D/', '', $pageRes['whatsapp_number']);
+                $numbers[$num] = $pageRes['whatsapp_number'].' (Principal da PÃ¡gina)';
+            }
+        } catch (\Throwable $e) {
+            $this->logMeta('debug', 'Erro ao ler whatsapp_number da pÃ¡gina', ['msg' => $e->getMessage()]);
         }
-    } catch (\Throwable $e) {
-        $this->logMeta('debug', 'Erro ao ler whatsapp_number da pÃ¡gina', ['msg' => $e->getMessage()]);
+
+        return $numbers;
     }
 
-    return $numbers;
-}
-
-/**
- * FunÃ§Ã£o auxiliar para buscar nÃºmeros de uma WABA especÃ­fica
- */
-private function fetchNumbersFromWaba(array $waba, string $accessToken, array &$numbers, array $stepContext): void
-{
-    try {
-        $phones = $this->client->get("{$waba['id']}/phone_numbers", $accessToken, ['fields' => 'display_phone_number'], $stepContext);
-        foreach (Arr::get($phones, 'data', []) as $phone) {
-            if (!empty($phone['display_phone_number'])) {
-                $num = preg_replace('/\D/', '', $phone['display_phone_number']);
-                $numbers[$num] = $phone['display_phone_number'] . " (WABA: {$waba['name']})";
+    /**
+     * FunÃ§Ã£o auxiliar para buscar nÃºmeros de uma WABA especÃ­fica
+     */
+    private function fetchNumbersFromWaba(array $waba, string $accessToken, array &$numbers, array $stepContext): void
+    {
+        try {
+            $phones = $this->client->get("{$waba['id']}/phone_numbers", $accessToken, ['fields' => 'display_phone_number'], $stepContext);
+            foreach (Arr::get($phones, 'data', []) as $phone) {
+                if (! empty($phone['display_phone_number'])) {
+                    $num = preg_replace('/\D/', '', $phone['display_phone_number']);
+                    $numbers[$num] = $phone['display_phone_number']." (WABA: {$waba['name']})";
+                }
             }
+        } catch (\Throwable) {
         }
-    } catch (\Throwable) {}
-}
+    }
 
     public function forgetCacheForUser(int $userId): void
     {
@@ -200,20 +207,20 @@ private function fetchNumbersFromWaba(array $waba, string $accessToken, array &$
 
     public function forgetInstagramAccountsCacheForUser(int $userId, ?string $adAccountId): void
     {
-        if (!$adAccountId) {
+        if (! $adAccountId) {
             return;
         }
 
-        Cache::forget($this->cacheKey($userId, 'instagram_accounts:' . $this->stripActPrefix($adAccountId)));
+        Cache::forget($this->cacheKey($userId, 'instagram_accounts:'.$this->stripActPrefix($adAccountId)));
     }
 
     public function forgetPixelsCacheForUser(int $userId, ?string $adAccountId): void
     {
-        if (!$adAccountId) {
+        if (! $adAccountId) {
             return;
         }
 
-        Cache::forget($this->cacheKey($userId, 'pixels:' . $this->stripActPrefix($adAccountId)));
+        Cache::forget($this->cacheKey($userId, 'pixels:'.$this->stripActPrefix($adAccountId)));
     }
 
     public function findCityKey(string $accessToken, string $cityName, ?string $stateName = null, array $context = []): ?string
@@ -239,6 +246,7 @@ private function fetchNumbersFromWaba(array $waba, string $accessToken, array &$
 
             if ($stateName && isset($entry['region']) && Str::lower($entry['region']) !== Str::lower($stateName)) {
                 $fallback ??= $entry['key'] ?? null;
+
                 continue;
             }
 
@@ -254,7 +262,9 @@ private function fetchNumbersFromWaba(array $waba, string $accessToken, array &$
                 'city_key' => $fallback,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService find city key failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService find city key failed', array_merge($stepContext, [
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $fallback;
@@ -293,13 +303,16 @@ private function fetchNumbersFromWaba(array $waba, string $accessToken, array &$
                 'campaign_id' => $id,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService create campaign failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService create campaign failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $id;
     }
 
-public function createAdSet(
+    public function createAdSet(
         string $accessToken,
         string $adAccountId,
         string $campaignId,
@@ -376,7 +389,10 @@ public function createAdSet(
                 'ad_set_id' => $id,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService create ad set failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService create ad set failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $id;
@@ -399,8 +415,12 @@ public function createAdSet(
         );
 
         $images = $response['images'] ?? [];
-        if (!$images) {
-            $this->logMeta('warning', 'MetaAdsService upload image failed', $stepContext);
+        if (! $images) {
+            $this->logMeta('warning', 'MetaAdsService upload image failed', array_merge($stepContext, [
+                'expected_field' => 'images',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
+
             return null;
         }
 
@@ -412,7 +432,10 @@ public function createAdSet(
                 'image_hash' => $hash,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService upload image hash missing', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService upload image hash missing', array_merge($stepContext, [
+                'expected_field' => 'images.*.hash',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $hash;
@@ -440,7 +463,10 @@ public function createAdSet(
                 'video_id' => $videoId,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService upload video failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService upload video failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $videoId;
@@ -526,7 +552,10 @@ public function createAdSet(
                 'creative_id' => $id,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService create creative failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService create creative failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $id;
@@ -612,7 +641,10 @@ public function createAdSet(
                 'creative_id' => $id,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService create video creative failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService create video creative failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $id;
@@ -642,7 +674,10 @@ public function createAdSet(
                 'creative_id' => $id,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService create existing post creative failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService create existing post creative failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $id;
@@ -677,7 +712,10 @@ public function createAdSet(
                 'ad_id' => $id,
             ]));
         } else {
-            $this->logMeta('warning', 'MetaAdsService create ad failed', $stepContext);
+            $this->logMeta('warning', 'MetaAdsService create ad failed', array_merge($stepContext, [
+                'expected_field' => 'id',
+                'meta_response' => $this->sanitizeForLog($response),
+            ]));
         }
 
         return $id;
@@ -709,7 +747,7 @@ public function createAdSet(
 
     private function formatAdAccountId(string $adAccountId): string
     {
-        return Str::startsWith($adAccountId, 'act_') ? $adAccountId : 'act_' . $adAccountId;
+        return Str::startsWith($adAccountId, 'act_') ? $adAccountId : 'act_'.$adAccountId;
     }
 
     private function stripActPrefix(string $adAccountId): string
@@ -730,5 +768,26 @@ public function createAdSet(
     private function logMeta(string $level, string $message, array $context = []): void
     {
         Log::channel('meta')->log($level, $message, $context);
+    }
+
+    private function sanitizeForLog(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $sanitized = [];
+
+        foreach ($value as $key => $item) {
+            if (is_string($key) && in_array($key, self::SENSITIVE_LOG_KEYS, true)) {
+                $sanitized[$key] = '***';
+
+                continue;
+            }
+
+            $sanitized[$key] = $this->sanitizeForLog($item);
+        }
+
+        return $sanitized;
     }
 }
