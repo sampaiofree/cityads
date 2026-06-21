@@ -2,11 +2,10 @@
 
 namespace App\Filament\Pages;
 
-use App\Filament\Pages\MetaSettings;
 use App\Jobs\ProcessMetaAdBatch;
+use App\Models\City;
 use App\Models\MetaAdBatch;
 use App\Models\MetaConnection;
-use App\Models\City;
 use App\Services\Meta\MetaAdsService;
 use Filament\Actions\Action;
 use Filament\Forms\Components\ColorPicker;
@@ -19,17 +18,17 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
-use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Enums\MaxWidth;
 use Filament\Tables\Actions\Action as TableAction;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -43,12 +42,22 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
     use InteractsWithForms;
     use InteractsWithTable;
 
+    private const DESTINATION_TYPE = 'WEBSITE';
+
+    private const OBJECTIVE = 'OUTCOME_LEADS';
+
     protected static ?string $navigationIcon = 'heroicon-o-megaphone';
+
     protected static ?string $navigationGroup = 'Meta Ads';
+
     protected static ?string $navigationLabel = 'Criar anuncios';
+
     protected static ?string $title = 'Criar anuncios em massa';
+
     protected static ?int $navigationSort = 2;
+
     protected static ?string $slug = 'meta-ads';
+
     protected static string $view = 'filament.pages.meta-ads-bulk';
 
     public ?array $data = [];
@@ -58,12 +67,14 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $connection = $this->connection();
 
         $this->form->fill([
+            'destination_type' => self::DESTINATION_TYPE,
+            'objective' => self::OBJECTIVE,
             'daily_budget' => 6.6,
             'start_at' => now()->addMinutes(10),
+            'url_template' => $this->automaticUrlTemplate(),
             'title_template' => '{cidade} RECEBE +40 CURSOS PROFISSIONALIZANTES',
             'body_template' => "Programa liberado para {cidade}.\n\nSem mensalidades e sem custo de material.\n\nClique em \"Saiba mais\" e garanta sua vaga.",
             'creative_source_mode' => 'single_media',
-            'creative_media_type' => 'image',
             'rotation_image_paths' => [],
             'rotation_image_preview_urls' => [],
             'existing_post_id' => '',
@@ -86,18 +97,20 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                     ->schema([
                         Select::make('destination_type')
                             ->label('Tipo de destino')
-                            ->options($this->destinationTypeOptions())
-                            ->required()
-                            ->reactive()
-                            ->afterStateUpdated(function (callable $set) {
-                                $set('objective', null);
-                            }),
+                            ->options([
+                                self::DESTINATION_TYPE => 'Website',
+                            ])
+                            ->default(self::DESTINATION_TYPE)
+                            ->disabled()
+                            ->dehydrated(false),
                         Select::make('objective')
                             ->label('Objetivo')
-                            ->options(fn (Get $get) => $this->objectiveOptions($get('destination_type')))
-                            ->disabled(fn (Get $get) => blank($get('destination_type')))
-                            ->placeholder('Selecione o tipo de destino')
-                            ->required(),
+                            ->options([
+                                self::OBJECTIVE => 'Cadastros',
+                            ])
+                            ->default(self::OBJECTIVE)
+                            ->disabled()
+                            ->dehydrated(false),
                         DateTimePicker::make('start_at')
                             ->label('Inicio da campanha')
                             ->required(),
@@ -105,8 +118,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->label('Orcamento diario (R$)')
                             ->numeric()
                             ->required(),
-                        Toggle::make('auto_activate')
-                            ->label('Ativar automaticamente'),
                     ])
                     ->columns(2),
                 Section::make('Conexao Meta')
@@ -120,7 +131,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->options(fn () => $this->getAdAccountOptions())
                             ->searchable()
                             ->required(fn () => $this->hasValidConnection())
-                            ->disabled(fn () => !$this->hasValidConnection())
+                            ->disabled(fn () => ! $this->hasValidConnection())
                             ->reactive()
                             ->afterStateUpdated(fn (callable $set) => $set('pixel_id', null)),
                         Select::make('page_id')
@@ -128,23 +139,26 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->options(fn () => $this->getPageOptions())
                             ->searchable()
                             ->required(fn () => $this->hasValidConnection())
-                            ->disabled(fn () => !$this->hasValidConnection()),
+                            ->disabled(fn () => ! $this->hasValidConnection()),
                         Select::make('pixel_id')
                             ->label('Pixel')
                             ->options(fn (Get $get) => $this->getPixelOptions($get('ad_account_id')))
                             ->searchable()
                             ->required(fn () => $this->hasValidConnection())
-                            ->disabled(fn () => !$this->hasValidConnection()),
+                            ->disabled(fn () => ! $this->hasValidConnection()),
                     ])
                     ->columns(2),
                 Section::make('Destino e Segmentacao')
                     ->schema([
                         TextInput::make('url_template')
                             ->label('URL de destino')
-                            ->required(fn (Get $get) => ($get('destination_type') ?? null) !== 'WHATSAPP' && ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
-                            ->visible(fn (Get $get) => ($get('destination_type') ?? null) !== 'WHATSAPP' && ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
+                            ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
+                            ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') !== 'existing_post')
+                            ->disabled(fn () => $this->automaticUrlTemplate() !== null)
                             ->reactive()
-                            ->helperText('Use {cidade} para inserir o nome da cidade.'),
+                            ->helperText(fn () => $this->automaticUrlTemplate() !== null
+                                ? 'URL definida automaticamente pelo dominio do usuario.'
+                                : 'Use {cidade} para inserir o nome da cidade.'),
                         Select::make('state')
                             ->label('Estado')
                             ->options($this->stateOptions())
@@ -167,7 +181,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                         Select::make('creative_source_mode')
                             ->label('Modo do criativo')
                             ->options([
-                                'single_media' => 'Midia unica (imagem ou video)',
+                                'single_media' => 'Imagem unica',
                                 'image_rotation' => 'Rodizio de imagens (ate 30)',
                                 'existing_post' => 'Usar post existente (ID)',
                             ])
@@ -175,36 +189,29 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->default('single_media')
                             ->live()
                             ->afterStateUpdated(function ($state, callable $set) {
-                                $mode = $this->normalizeCreativeSourceMode($state);
-
-                                if ($mode === 'image_rotation') {
-                                    $set('creative_media_type', 'image');
-                                }
-
-                                if ($mode === 'existing_post') {
-                                    $set('creative_media_type', 'image');
+                                if ($this->normalizeCreativeSourceMode($state) === 'existing_post') {
                                     $set('image_preview_url', null);
                                 }
                             }),
                         FileUpload::make('image_path')
-                            ->label('Midia do anuncio (imagem ou video)')
+                            ->label('Imagem do anuncio')
                             ->disk('public')
                             ->directory('meta_ads/source')
-                            ->acceptedFileTypes(['image/*', 'video/*'])
+                            ->image()
+                            ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
                             ->extraInputAttributes(['id' => 'meta-ads-image-input'])
                             ->deletable()
                             ->nullable()
                             ->maxSize(51200)
                             ->live()
                             ->afterStateUpdated(function ($state, callable $set) {
-                                $set('creative_media_type', $this->detectCreativeMediaTypeFromUploadState($state));
-
                                 if ($state instanceof TemporaryUploadedFile) {
                                     try {
                                         $set('image_preview_url', $state->temporaryUrl());
                                     } catch (Throwable) {
                                         $set('image_preview_url', null);
                                     }
+
                                     return;
                                 }
 
@@ -216,6 +223,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                                         } catch (Throwable) {
                                             $set('image_preview_url', null);
                                         }
+
                                         return;
                                     }
                                 }
@@ -224,7 +232,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             })
                             ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'single_media')
                             ->disabled(fn (Get $get) => blank($get('state')) && empty($get('city_ids')))
-                            ->helperText('Selecione um estado ou cidades antes de enviar a midia. Videos nao recebem bloco de texto na imagem.')
+                            ->helperText('Selecione um estado ou cidades antes de enviar a imagem. Formatos aceitos: JPG, PNG e WEBP.')
                             ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'single_media'),
                         FileUpload::make('rotation_image_paths')
                             ->label('Imagens do rodizio (ate 30)')
@@ -240,7 +248,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->maxSize(5120)
                             ->live()
                             ->afterStateUpdated(function ($state, callable $set) {
-                                $set('creative_media_type', 'image');
                                 $set('rotation_image_preview_urls', $this->detectRotationImagePreviewUrlsFromUploadState($state));
                             })
                             ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation')
@@ -254,8 +261,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                             ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'existing_post')
                             ->required(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'existing_post')
                             ->live(),
-                        Hidden::make('creative_media_type')
-                            ->default('image'),
                         Hidden::make('image_preview_url')
                             ->dehydrated(false),
                         Hidden::make('rotation_image_preview_urls')
@@ -278,7 +283,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                         ? 'Arraste o bloco na previa para posicionar. Bloco e posicao serao aplicados igualmente em todas as imagens do rodizio.'
                         : 'Arraste o bloco na previa para posicionar.')
                     ->visible(fn (Get $get) => ($get('creative_source_mode') ?? 'single_media') === 'image_rotation'
-                        || (($get('creative_source_mode') ?? 'single_media') === 'single_media' && ($get('creative_media_type') ?? 'image') !== 'video'))
+                        || ($get('creative_source_mode') ?? 'single_media') === 'single_media')
                     ->schema([
                         Textarea::make('overlay_text')
                             ->label('Texto do bloco')
@@ -292,10 +297,10 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                         Toggle::make('overlay_bg_transparent')
                             ->label('Fundo transparente')
                             ->live()
-                            ->afterStateUpdated(fn ($state, callable $set) => $state ? $set('overlay_bg_color', null) : $set('overlay_bg_color', '#000000')),    
+                            ->afterStateUpdated(fn ($state, callable $set) => $state ? $set('overlay_bg_color', null) : $set('overlay_bg_color', '#000000')),
                         ColorPicker::make('overlay_bg_color')
                             ->label('Cor do fundo')
-                            ->required(fn (Get $get) => !$get('overlay_bg_transparent'))
+                            ->required(fn (Get $get) => ! $get('overlay_bg_transparent'))
                             ->disabled(fn (Get $get) => (bool) $get('overlay_bg_transparent'))
                             ->live(),
                         Hidden::make('overlay_position_x')
@@ -308,103 +313,43 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->statePath('data');
     }
 
-    public function createBatch(): void
+    public function prepareCreateBatch(): void
     {
-        $data = $this->form->getState();
-
-        if (!$this->hasValidConnection()) {
-            Notification::make()
-                ->danger()
-                ->title('Conecte sua conta Meta antes de criar o lote.')
-                ->send();
+        if ($this->validatedBatchPayload() === null) {
             return;
         }
 
-        if (empty($data['state']) && empty($data['city_ids'])) {
-            Notification::make()
-                ->danger()
-                ->title('Selecione pelo menos um estado ou uma cidade.')
-                ->send();
+        $this->mountAction('confirmCreateBatch');
+    }
+
+    public function confirmCreateBatchAction(): Action
+    {
+        return Action::make('confirmCreateBatch')
+            ->label('Criar anuncios')
+            ->requiresConfirmation()
+            ->modalHeading('Confirme antes de criar os anuncios')
+            ->modalDescription(null)
+            ->modalContent(view('filament.pages.meta-ads-confirmation'))
+            ->modalSubmitActionLabel('Estou ciente e criar anuncios')
+            ->modalCancelActionLabel('Cancelar')
+            ->modalWidth(MaxWidth::Large)
+            ->color('warning')
+            ->action(fn () => $this->createBatch());
+    }
+
+    private function createBatch(): void
+    {
+        $payload = $this->validatedBatchPayload();
+        if ($payload === null) {
             return;
         }
 
-        if (empty($data['pixel_id'])) {
-            Notification::make()
-                ->danger()
-                ->title('Selecione um pixel antes de criar o lote.')
-                ->send();
-            return;
-        }
-
-        $destinationType = $data['destination_type'] ?? null;
-        $whatsappNumber = null;
-        $urlTemplate = $data['url_template'] ?? '';
-        $creativeSourceMode = $this->normalizeCreativeSourceMode($data['creative_source_mode'] ?? null);
-        $creativeImagePaths = [];
-        $imagePath = is_array($data['image_path'] ?? null) ? (string) (reset($data['image_path']) ?: '') : (string) ($data['image_path'] ?? '');
-        $creativeMediaType = 'image';
-        $existingPostId = null;
-
-        if ($destinationType === 'WHATSAPP') {
-            $whatsappNumber = is_string($data['whatsapp_number'] ?? null)
-                ? preg_replace('/\D/', '', $data['whatsapp_number'])
-                : null;
-
-            $urlTemplate = !empty($data['page_id'])
-                ? sprintf('https://www.facebook.com/%s', $data['page_id'])
-                : '';
-        }
-
-        if ($creativeSourceMode === 'image_rotation') {
-            $creativeImagePaths = $this->normalizeRotationImagePaths($data['rotation_image_paths'] ?? []);
-
-            if (count($creativeImagePaths) < 1 || count($creativeImagePaths) > 30) {
-                Notification::make()
-                    ->danger()
-                    ->title('Envie de 1 a 30 imagens para o rodizio.')
-                    ->send();
-                return;
-            }
-
-            foreach ($creativeImagePaths as $path) {
-                if (!$this->isSupportedRotationImagePath($path)) {
-                    Notification::make()
-                        ->danger()
-                        ->title('Rodizio aceita apenas imagens JPG, PNG ou WEBP.')
-                        ->send();
-                    return;
-                }
-            }
-
-            $imagePath = (string) ($creativeImagePaths[0] ?? '');
-            $creativeMediaType = 'image';
-        } elseif ($creativeSourceMode === 'existing_post') {
-            $existingPostId = $this->normalizeExistingPostObjectStoryId(
-                is_string($data['existing_post_id'] ?? null) ? $data['existing_post_id'] : null,
-                is_string($data['page_id'] ?? null) ? $data['page_id'] : null
-            );
-
-            if (!$existingPostId) {
-                Notification::make()
-                    ->danger()
-                    ->title('Informe um ID de post valido (pagina_post ou ID numerico do post).')
-                    ->send();
-                return;
-            }
-
-            $imagePath = '';
-            $creativeMediaType = 'image';
-        } else {
-            if ($imagePath === '') {
-                Notification::make()
-                    ->danger()
-                    ->title('Envie uma midia para criar o lote.')
-                    ->send();
-                return;
-            }
-
-            $creativeMediaType = $this->normalizeCreativeMediaType($data['creative_media_type'] ?? $imagePath);
-        }
+        $data = $payload['data'];
+        $creativeSourceMode = $payload['creative_source_mode'];
+        $creativeImagePaths = $payload['creative_image_paths'];
+        $imagePath = $payload['image_path'];
+        $existingPostId = $payload['existing_post_id'];
+        $urlTemplate = $payload['url_template'];
 
         $user = Auth::user();
 
@@ -412,37 +357,36 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
         $batch = MetaAdBatch::create([
             'user_id' => $user->id,
-            'objective' => $data['objective'],
-            'destination_type' => $destinationType,
+            'objective' => self::OBJECTIVE,
+            'destination_type' => self::DESTINATION_TYPE,
             'ad_account_id' => $data['ad_account_id'],
             'page_id' => $data['page_id'] ?? null,
             'instagram_actor_id' => $instagramActorId,
             'pixel_id' => $data['pixel_id'] ?? null,
             'start_at' => $data['start_at'],
             'url_template' => $urlTemplate,
-            'title_template' => $data['title_template'],
-            'body_template' => $data['body_template'],
+            'title_template' => $data['title_template'] ?? '',
+            'body_template' => $data['body_template'] ?? '',
             'image_path' => $imagePath !== '' ? $imagePath : null,
-            'auto_activate' => (bool) ($data['auto_activate'] ?? false),
+            'auto_activate' => false,
             'daily_budget_cents' => (int) round(((float) $data['daily_budget']) * 100),
             'settings' => [
-                'destination_type' => $destinationType,
-                'whatsapp_number' => $whatsappNumber,
+                'destination_type' => self::DESTINATION_TYPE,
+                'whatsapp_number' => null,
                 'state' => $data['state'] ?? null,
                 'city_ids' => $data['city_ids'] ?? [],
                 'creative_source_mode' => $creativeSourceMode,
-                'creative_media_type' => $creativeMediaType,
+                'creative_media_type' => 'image',
                 'creative_image_paths' => $creativeImagePaths,
                 'creative_rotation_strategy' => 'round_robin',
                 'creative_city_order' => 'alphabetical',
                 'existing_post_id' => $existingPostId,
                 'overlay_text' => $data['overlay_text'] ?? '',
                 'overlay_text_color' => $data['overlay_text_color'] ?? '#ffffff',
-                'overlay_bg_color' => $data['overlay_bg_transparent'] ? 'transparent' : ($data['overlay_bg_color'] ?? '#000000'),
-                'overlay_bg_transparent' => (bool) $data['overlay_bg_transparent'],
+                'overlay_bg_color' => ($data['overlay_bg_transparent'] ?? false) ? 'transparent' : ($data['overlay_bg_color'] ?? '#000000'),
+                'overlay_bg_transparent' => (bool) ($data['overlay_bg_transparent'] ?? false),
                 'overlay_position_x' => $data['overlay_position_x'] ?? 50,
                 'overlay_position_y' => $data['overlay_position_y'] ?? 12,
-                
             ],
         ]);
 
@@ -467,13 +411,135 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $this->data['rotation_image_preview_urls'] = [];
     }
 
+    /**
+     * @return array{
+     *     data: array<string, mixed>,
+     *     creative_source_mode: string,
+     *     creative_image_paths: array<int, string>,
+     *     image_path: string,
+     *     existing_post_id: ?string,
+     *     url_template: string
+     * }|null
+     */
+    private function validatedBatchPayload(): ?array
+    {
+        $data = $this->form->getState();
+
+        if (! $this->hasValidConnection()) {
+            Notification::make()
+                ->danger()
+                ->title('Conecte sua conta Meta antes de criar o lote.')
+                ->send();
+
+            return null;
+        }
+
+        if (empty($data['state']) && empty($data['city_ids'])) {
+            Notification::make()
+                ->danger()
+                ->title('Selecione pelo menos um estado ou uma cidade.')
+                ->send();
+
+            return null;
+        }
+
+        if (empty($data['pixel_id'])) {
+            Notification::make()
+                ->danger()
+                ->title('Selecione um pixel antes de criar o lote.')
+                ->send();
+
+            return null;
+        }
+
+        $creativeSourceMode = $this->normalizeCreativeSourceMode($data['creative_source_mode'] ?? null);
+        $creativeImagePaths = [];
+        $imagePath = is_array($data['image_path'] ?? null)
+            ? (string) (reset($data['image_path']) ?: '')
+            : (string) ($data['image_path'] ?? '');
+        $existingPostId = null;
+
+        if ($creativeSourceMode === 'image_rotation') {
+            $creativeImagePaths = $this->normalizeRotationImagePaths($data['rotation_image_paths'] ?? []);
+
+            if (count($creativeImagePaths) < 1 || count($creativeImagePaths) > 30) {
+                Notification::make()
+                    ->danger()
+                    ->title('Envie de 1 a 30 imagens para o rodizio.')
+                    ->send();
+
+                return null;
+            }
+
+            foreach ($creativeImagePaths as $path) {
+                if (! $this->isSupportedImagePath($path)) {
+                    Notification::make()
+                        ->danger()
+                        ->title('Rodizio aceita apenas imagens JPG, PNG ou WEBP.')
+                        ->send();
+
+                    return null;
+                }
+            }
+
+            $imagePath = (string) ($creativeImagePaths[0] ?? '');
+        } elseif ($creativeSourceMode === 'existing_post') {
+            $existingPostId = $this->normalizeExistingPostObjectStoryId(
+                is_string($data['existing_post_id'] ?? null) ? $data['existing_post_id'] : null,
+                is_string($data['page_id'] ?? null) ? $data['page_id'] : null
+            );
+
+            if (! $existingPostId) {
+                Notification::make()
+                    ->danger()
+                    ->title('Informe um ID de post valido (pagina_post ou ID numerico do post).')
+                    ->send();
+
+                return null;
+            }
+
+            $imagePath = '';
+        } else {
+            if ($imagePath === '') {
+                Notification::make()
+                    ->danger()
+                    ->title('Envie uma imagem para criar o lote.')
+                    ->send();
+
+                return null;
+            }
+
+            if (! $this->isSupportedImagePath($imagePath)) {
+                Notification::make()
+                    ->danger()
+                    ->title('Envie uma imagem JPG, PNG ou WEBP.')
+                    ->send();
+
+                return null;
+            }
+        }
+
+        $urlTemplate = $creativeSourceMode === 'existing_post'
+            ? ''
+            : ($this->automaticUrlTemplate() ?? trim((string) ($data['url_template'] ?? '')));
+
+        return [
+            'data' => $data,
+            'creative_source_mode' => $creativeSourceMode,
+            'creative_image_paths' => $creativeImagePaths,
+            'image_path' => $imagePath,
+            'existing_post_id' => $existingPostId,
+            'url_template' => $urlTemplate,
+        ];
+    }
+
     public function addImage(): void
     {
         $mode = $this->normalizeCreativeSourceMode($this->data['creative_source_mode'] ?? null);
 
         if ($mode === 'image_rotation') {
-            $this->data['creative_media_type'] = 'image';
             $this->dispatch('meta-ads-rotation-image-picker');
+
             return;
         }
 
@@ -483,7 +549,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
         $this->data['image_path'] = null;
         $this->data['image_preview_url'] = null;
-        $this->data['creative_media_type'] = 'image';
         $this->dispatch('meta-ads-image-picker');
     }
 
@@ -515,7 +580,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                     ->label('Ver')
                     ->icon('heroicon-o-eye')
                     ->color('gray')
-                    ->modalHeading(fn (MetaAdBatch $record) => 'Itens do lote #' . $record->id)
+                    ->modalHeading(fn (MetaAdBatch $record) => 'Itens do lote #'.$record->id)
                     ->modalWidth(MaxWidth::SevenExtraLarge)
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel('Fechar')
@@ -540,14 +605,16 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                 ->danger()
                 ->title('Voce nao tem permissao para cancelar este lote.')
                 ->send();
+
             return;
         }
 
-        if (!in_array($record->status, ['queued', 'processing'], true)) {
+        if (! in_array($record->status, ['queued', 'processing'], true)) {
             Notification::make()
                 ->warning()
                 ->title('Este lote nao pode ser cancelado.')
                 ->send();
+
             return;
         }
 
@@ -571,11 +638,11 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             Action::make('connectMeta')
                 ->label('Conectar com Facebook')
                 ->action('openSdkConnect')
-                ->visible(fn () => $this->hasAppId() && !$this->hasValidConnection()),
+                ->visible(fn () => $this->hasAppId() && ! $this->hasValidConnection()),
             Action::make('metaSettings')
                 ->label('Configurar App')
                 ->url(fn () => MetaSettings::getUrl())
-                ->visible(fn () => !$this->hasAppId()),
+                ->visible(fn () => ! $this->hasAppId()),
             Action::make('refreshMeta')
                 ->label('Atualizar listas')
                 ->action(fn () => $this->refreshMetaAssets())
@@ -588,11 +655,12 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         $connection = $this->connection();
         $appId = $connection?->app_id;
 
-        if (!$appId) {
+        if (! $appId) {
             Notification::make()
                 ->danger()
                 ->title('Cadastre o App ID antes de conectar.')
                 ->send();
+
             return;
         }
 
@@ -674,6 +742,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->take(10)
             ->map(function (City $city, int $cityIndex) use ($imagePaths, $imageCount) {
                 $imageIndex = $cityIndex % $imageCount;
+
                 return [
                     'city' => $city->name,
                     'state' => $city->state,
@@ -734,7 +803,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
     private function normalizeCreativeSourceMode(mixed $value): string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return 'single_media';
         }
 
@@ -747,28 +816,9 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         };
     }
 
-    private function normalizeCreativeMediaType(mixed $value): string
-    {
-        if (is_string($value)) {
-            $normalized = Str::lower(trim($value));
-            if ($normalized === 'video') {
-                return 'video';
-            }
-        }
-
-        if (is_string($value) && $value !== '') {
-            $extension = Str::lower(pathinfo($value, PATHINFO_EXTENSION));
-            if (in_array($extension, ['mp4', 'mov', 'avi', 'm4v', 'webm'], true)) {
-                return 'video';
-            }
-        }
-
-        return 'image';
-    }
-
     private function normalizeRotationImagePaths(mixed $value): array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return [];
         }
 
@@ -783,7 +833,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         return array_values($paths);
     }
 
-    private function isSupportedRotationImagePath(string $path): bool
+    private function isSupportedImagePath(string $path): bool
     {
         $extension = Str::lower(pathinfo($path, PATHINFO_EXTENSION));
 
@@ -808,32 +858,10 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
                 return null;
             }
 
-            return $pageId . '_' . $value;
+            return $pageId.'_'.$value;
         }
 
         return null;
-    }
-
-    private function detectCreativeMediaTypeFromUploadState(mixed $state): string
-    {
-        if ($state instanceof TemporaryUploadedFile) {
-            $mimeType = Str::lower((string) ($state->getMimeType() ?? ''));
-            return Str::startsWith($mimeType, 'video/') ? 'video' : 'image';
-        }
-
-        if (is_array($state)) {
-            $file = reset($state);
-            if ($file instanceof TemporaryUploadedFile) {
-                $mimeType = Str::lower((string) ($file->getMimeType() ?? ''));
-                return Str::startsWith($mimeType, 'video/') ? 'video' : 'image';
-            }
-        }
-
-        if (is_string($state) && $state !== '') {
-            return $this->normalizeCreativeMediaType($state);
-        }
-
-        return 'image';
     }
 
     private function detectRotationImagePreviewUrlsFromUploadState(mixed $state): array
@@ -846,7 +874,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             }
         }
 
-        if (!is_array($state)) {
+        if (! is_array($state)) {
             return [];
         }
 
@@ -876,6 +904,30 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
         return Auth::user()?->metaConnection;
     }
 
+    private function automaticUrlTemplate(): ?string
+    {
+        $domain = trim((string) Auth::user()?->dominio);
+        if ($domain === '') {
+            return null;
+        }
+
+        $candidate = preg_match('#^https?://#i', $domain) === 1
+            ? $domain
+            : 'https://'.$domain;
+        $parts = parse_url($candidate);
+
+        if (! is_array($parts) || empty($parts['host'])) {
+            return null;
+        }
+
+        $host = (string) $parts['host'];
+        $port = isset($parts['port']) ? ':'.(int) $parts['port'] : '';
+        $path = isset($parts['path']) ? '/'.trim((string) $parts['path'], '/') : '';
+        $path = $path === '/' ? '' : $path;
+
+        return sprintf('https://%s%s%s?c={cidade}', $host, $port, $path);
+    }
+
     private function hasAppId(): bool
     {
         return (bool) $this->connection()?->app_id;
@@ -884,7 +936,7 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
     private function hasValidConnection(): bool
     {
         $connection = $this->connection();
-        if (!$connection || !$connection->access_token) {
+        if (! $connection || ! $connection->access_token) {
             return false;
         }
 
@@ -898,11 +950,11 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
     private function connectionStatus(): string
     {
         $connection = $this->connection();
-        if (!$connection || !$connection->app_id) {
+        if (! $connection || ! $connection->app_id) {
             return 'App ID nao configurado.';
         }
 
-        if (!$connection->access_token) {
+        if (! $connection->access_token) {
             return 'Nao conectado.';
         }
 
@@ -915,39 +967,43 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
     private function getAdAccountOptions(): array
     {
-        if (!$this->hasValidConnection()) {
+        if (! $this->hasValidConnection()) {
             return [];
         }
 
         try {
             Log::info('MetaAdsBulk fetching ad accounts', ['user_id' => Auth::id()]);
             $service = app(MetaAdsService::class);
+
             return $service->fetchAdAccounts($this->connection()->access_token, Auth::id());
         } catch (Throwable $exception) {
             Log::error('MetaAdsBulk fetch ad accounts failed', ['user_id' => Auth::id(), 'exception' => $exception->getMessage()]);
+
             return [];
         }
     }
 
     private function getPageOptions(): array
     {
-        if (!$this->hasValidConnection()) {
+        if (! $this->hasValidConnection()) {
             return [];
         }
 
         try {
             Log::info('MetaAdsBulk fetching pages', ['user_id' => Auth::id()]);
             $service = app(MetaAdsService::class);
+
             return $service->fetchPages($this->connection()->access_token, Auth::id());
         } catch (Throwable $exception) {
             Log::error('MetaAdsBulk fetch pages failed', ['user_id' => Auth::id(), 'exception' => $exception->getMessage()]);
+
             return [];
         }
     }
 
     private function getInstagramOptions(): array
     {
-        if (!$this->hasValidConnection()) {
+        if (! $this->hasValidConnection()) {
             return [];
         }
 
@@ -955,23 +1011,26 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             Log::info('MetaAdsBulk fetching instagram accounts', ['user_id' => Auth::id()]);
             $service = app(MetaAdsService::class);
             $adAccountId = $this->data['ad_account_id'] ?? null;
+
             return $service->fetchInstagramAccounts($this->connection()->access_token, Auth::id(), $adAccountId, [
                 'ad_account_id' => $adAccountId,
             ]);
         } catch (Throwable $exception) {
             Log::error('MetaAdsBulk fetch instagram accounts failed', ['user_id' => Auth::id(), 'exception' => $exception->getMessage()]);
+
             return [];
         }
     }
 
     private function getPixelOptions(?string $adAccountId): array
     {
-        if (!$this->hasValidConnection() || !$adAccountId) {
+        if (! $this->hasValidConnection() || ! $adAccountId) {
             return [];
         }
 
         try {
             $service = app(MetaAdsService::class);
+
             return $service->fetchPixels($this->connection()->access_token, Auth::id(), $adAccountId);
         } catch (Throwable) {
             return [];
@@ -990,10 +1049,10 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
 
         return City::query()
             ->where(function ($query) use ($search, $normalizedSearch, $normalizedNameSql) {
-                $query->where('name', 'like', '%' . $search . '%');
+                $query->where('name', 'like', '%'.$search.'%');
 
                 if ($normalizedSearch !== '') {
-                    $query->orWhereRaw("{$normalizedNameSql} like ?", ['%' . $normalizedSearch . '%']);
+                    $query->orWhereRaw("{$normalizedNameSql} like ?", ['%'.$normalizedSearch.'%']);
                 }
             })
             ->limit(20)
@@ -1056,37 +1115,6 @@ class MetaAdsBulk extends Page implements HasForms, HasTable
             ->get()
             ->mapWithKeys(fn (City $city) => [$city->id => sprintf('%s - %s', $city->name, $city->state)])
             ->all();
-    }
-
-    private function destinationTypeOptions(): array
-    {
-        return [
-            'WEBSITE' => 'Website',
-            'WHATSAPP' => 'WhatsApp',
-        ];
-    }
-
-    private function objectiveOptions(?string $destinationType): array
-    {
-        if (!$destinationType) {
-            return [];
-        }
-
-        return match ($destinationType) {
-            'WEBSITE' => [
-                'OUTCOME_AWARENESS' => 'Reconhecimento',
-                'OUTCOME_LEADS' => 'Cadastros',
-                'OUTCOME_LEADS_CONTENT_VIEW' => 'ContentView',
-                'OUTCOME_SALES_INITIATE_CHECKOUT' => 'Finalizacao de compra (Initiate Checkout)',
-                'OUTCOME_SALES' => 'Vendas',
-            ],
-            'WHATSAPP' => [
-                'OUTCOME_AWARENESS' => 'Reconhecimento',
-                'OUTCOME_TRAFFIC' => 'Trafego',
-                'OUTCOME_ENGAGEMENT' => 'Engajamento',
-            ],
-            default => [],
-        };
     }
 
     private function stateOptions(): array

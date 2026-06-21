@@ -1,7 +1,7 @@
 <x-filament::page>
     <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div class="md:col-span-2">
-            <form wire:submit="createBatch" class="space-y-6" style="margin-bottom: 50px;">
+            <form wire:submit="prepareCreateBatch" class="space-y-6" style="margin-bottom: 50px;">
                 {{ $this->form }}
 
                 <x-filament::button type="submit">
@@ -33,7 +33,6 @@
                             imagePreviewUrl: @entangle('data.image_preview_url'),
                             rotationImagePaths: @entangle('data.rotation_image_paths'),
                             rotationImagePreviewUrls: @entangle('data.rotation_image_preview_urls'),
-                            mediaType: @entangle('data.creative_media_type'),
                             overlayText: @entangle('data.overlay_text'),
                             textColor: @entangle('data.overlay_text_color'),
                             bgColor: @entangle('data.overlay_bg_color'),
@@ -73,18 +72,7 @@
                                     </div>
                                 </template>
 
-                                <template x-if="!isExistingPostMode && imageUrl && isVideoMedia">
-                                    <div class="space-y-2">
-                                        <video :src="imageUrl" controls playsinline muted preload="metadata" class="block w-full h-auto rounded">
-                                            Seu navegador nao suporta video.
-                                        </video>
-                                        <p class="text-xs text-gray-500">
-                                            Videos nao recebem bloco de texto/placeholder {cidade}.
-                                        </p>
-                                    </div>
-                                </template>
-
-                                <template x-if="!isExistingPostMode && imageUrl && !isVideoMedia">
+                                <template x-if="!isExistingPostMode && imageUrl">
                                     <div class="relative" x-ref="canvas">
                                         <img :src="imageUrl" alt="Previa" class="block w-full h-auto" />
                                         <div
@@ -170,7 +158,6 @@
                     imagePreviewUrl: config.imagePreviewUrl,
                     rotationImagePaths: config.rotationImagePaths,
                     rotationImagePreviewUrls: config.rotationImagePreviewUrls,
-                    mediaType: config.mediaType,
                     overlayText: config.overlayText,
                     textColor: config.textColor,
                     bgColor: config.bgColor,
@@ -213,22 +200,6 @@
                             return null;
                         }
                         return `${this.storageBaseUrl}/${this.imagePath}`;
-                    },
-                    get isVideoMedia() {
-                        if (this.isExistingPostMode) {
-                            return false;
-                        }
-
-                        if ((this.sourceMode || 'single_media') === 'image_rotation') {
-                            return false;
-                        }
-
-                        if ((this.mediaType || '').toLowerCase() === 'video') {
-                            return true;
-                        }
-
-                        const source = (this.imagePreviewUrl || this.imagePath || '').toLowerCase();
-                        return ['.mp4', '.mov', '.avi', '.m4v', '.webm'].some((ext) => source.includes(ext));
                     },
                     get displayText() {
                         const text = (this.overlayText || '').replace(/\s+/g, ' ').trim();

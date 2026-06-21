@@ -161,6 +161,42 @@ test('chunk processes pending item and updates counters once', function () {
         ->and($batch->status)->toBe('completed');
 });
 
+test('city names are URL encoded in generated image ad links', function () {
+    Storage::fake('public');
+    Storage::disk('public')->put('meta_ads/source/image.jpg', 'image');
+
+    $user = createChunkProcessingUser();
+    $batch = createChunkProcessingBatch($user, [
+        'image_path' => 'meta_ads/source/image.jpg',
+        'url_template' => 'https://example.com?c={cidade}',
+        'settings' => [
+            'state' => 'Goias',
+            'creative_source_mode' => 'single_media',
+            'creative_media_type' => 'image',
+        ],
+    ]);
+    $item = MetaAdBatchItem::query()->create([
+        'meta_ad_batch_id' => $batch->id,
+        'city_name' => 'São Paulo',
+        'state_name' => 'São Paulo',
+        'meta_city_key' => 'city_key_1',
+        'image_hash' => 'image_hash_1',
+        'status' => 'pending',
+    ]);
+
+    $mock = bindMetaAdsServiceMock();
+    $mock->shouldReceive('createAdSet')->once()->andReturn('adset_1');
+    $mock->shouldReceive('createCreative')
+        ->once()
+        ->withArgs(fn (...$arguments) => $arguments[5] === 'https://example.com?c=S%C3%A3o%20Paulo')
+        ->andReturn('creative_1');
+    $mock->shouldReceive('createAd')->once()->andReturn('ad_1');
+
+    app(MetaAdBatchProcessor::class)->processChunk($batch->id, [$item->id]);
+
+    expect($item->refresh()->status)->toBe('success');
+});
+
 test('chunk caches city key on city and item after lookup', function () {
     $user = createChunkProcessingUser();
     $batch = createChunkProcessingBatch($user);

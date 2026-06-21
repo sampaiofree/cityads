@@ -1,21 +1,20 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use Laravel\Fortify\Features;
-use Livewire\Volt\Volt;
 use App\Http\Controllers\Admin\LogController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\MetaOAuthController;
 use App\Http\Controllers\MetaSdkController;
+use Illuminate\Support\Facades\Route;
+use Laravel\Fortify\Features;
+use Livewire\Volt\Volt;
 
 Route::get('/', function () {
     if (auth()->check()) {
         return redirect()->to('dashboard');
     }
 
-    return redirect()->to('dashboard/login');
+    return redirect()->route('login');
 })->name('home');
-
 
 Route::middleware(['auth'])->group(function () {
     Route::prefix('adm')->name('admin.')->group(function () {

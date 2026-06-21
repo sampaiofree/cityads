@@ -382,7 +382,7 @@ class MetaAdBatchProcessor
     ): ?string {
         $title = str_replace('{cidade}', $item->city_name, $batch->title_template);
         $body = str_replace('{cidade}', $item->city_name, $batch->body_template);
-        $url = str_replace('{cidade}', $item->city_name, $batch->url_template);
+        $url = str_replace('{cidade}', rawurlencode($item->city_name), $batch->url_template);
 
         if ($runtime['creative_source_mode'] === 'existing_post') {
             return $this->adsService->createExistingPostCreative(
