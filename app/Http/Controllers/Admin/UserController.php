@@ -45,7 +45,7 @@ class UserController extends Controller
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email,'.$user->id],
             'password' => ['nullable', 'string', 'min:6'],
             'is_admin' => ['nullable', 'boolean'],
         ]);
@@ -61,6 +61,23 @@ class UserController extends Controller
         return redirect()
             ->route('admin.users.index')
             ->with('status', 'Usuário atualizado com sucesso.');
+    }
+
+    public function destroy(User $user): RedirectResponse
+    {
+        $this->authorizeAdmin();
+
+        if ($user->is(auth()->user())) {
+            return redirect()
+                ->route('admin.users.index')
+                ->with('error', 'Você não pode excluir a própria conta.');
+        }
+
+        $user->delete();
+
+        return redirect()
+            ->route('admin.users.index')
+            ->with('status', 'Usuário excluído com sucesso.');
     }
 
     private function authorizeAdmin(): void

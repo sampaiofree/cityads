@@ -17,6 +17,12 @@
             </flux:callout>
         @endif
 
+        @if (session('error'))
+            <flux:callout variant="danger">
+                {{ session('error') }}
+            </flux:callout>
+        @endif
+
         <div class="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
@@ -43,17 +49,34 @@
                                     @endif
                                 </td>
                                 <td class="px-4 py-3 text-right">
-                                    <flux:button
-                                        class="edit-user"
-                                        variant="outline"
-                                        size="sm"
-                                        data-id="{{ $user->id }}"
-                                        data-name="{{ $user->name }}"
-                                        data-email="{{ $user->email }}"
-                                        data-is-admin="{{ $user->is_admin ? '1' : '0' }}"
-                                    >
-                                        {{ __('Editar') }}
-                                    </flux:button>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <flux:button
+                                            class="edit-user"
+                                            variant="outline"
+                                            size="sm"
+                                            data-id="{{ $user->id }}"
+                                            data-name="{{ $user->name }}"
+                                            data-email="{{ $user->email }}"
+                                            data-is-admin="{{ $user->is_admin ? '1' : '0' }}"
+                                        >
+                                            {{ __('Editar') }}
+                                        </flux:button>
+
+                                        @if (! $user->is(auth()->user()))
+                                            <form
+                                                method="POST"
+                                                action="{{ route('admin.users.destroy', $user) }}"
+                                                onsubmit="return confirm(@js(__('Tem certeza que deseja excluir o usuário :name? Esta ação não pode ser desfeita.', ['name' => $user->name])))"
+                                            >
+                                                @csrf
+                                                @method('DELETE')
+
+                                                <flux:button type="submit" variant="danger" size="sm">
+                                                    {{ __('Excluir') }}
+                                                </flux:button>
+                                            </form>
+                                        @endif
+                                    </div>
                                 </td>
                             </tr>
                         @empty

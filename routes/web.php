@@ -21,6 +21,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('usuarios', [UserController::class, 'index'])->name('users.index');
         Route::post('usuarios', [UserController::class, 'store'])->name('users.store');
         Route::put('usuarios/{user}', [UserController::class, 'update'])->name('users.update');
+        Route::delete('usuarios/{user}', [UserController::class, 'destroy'])->name('users.destroy');
         Route::get('logs', [LogController::class, 'index'])->name('logs.index');
         Route::get('logs/{file}/download', [LogController::class, 'download'])->where('file', '[A-Za-z0-9._-]+')->name('logs.download');
         Route::get('logs/{file}/tail', [LogController::class, 'tail'])->where('file', '[A-Za-z0-9._-]+')->name('logs.tail');
